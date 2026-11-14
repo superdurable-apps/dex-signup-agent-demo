@@ -164,7 +164,14 @@ in the application's process, start it and feed it:
     deduplicate RPCs (`Client.invokeRPC` has no request ID in `@superdurable/dex` 1.45.3), so the prompt's rule
     that a repeated `[slack <ts>]` is ignored is the guard.
   - Locally the runner uses Slack Socket Mode with the connection's app-level token, and the inbox lives in
-    `trigger-inboxes/` beside `connections.json`.
+    `trigger-inboxes/` beside `connections.json`. Hosted, the shared connection has no app token, so the runner
+    receives the events the platform relays, verifies each `Dex-Relay-Signature`, and keeps the inbox in the
+    Project's storage.
+
+Where they run ([`src/main.ts`](src/main.ts), [`src/application.ts`](src/application.ts)): locally, `npm start`
+runs one process with the Dex Worker, the watcher and the reply Trigger. On Superverse the same image runs two:
+`node . worker` runs the Worker and the watcher, and `node . web` runs the reply Trigger behind the HTTP server
+that receives the relayed events.
 
 ## Run it locally
 
@@ -221,9 +228,59 @@ You need Node.js 22.19 or later (24 recommended, `.nvmrc`) and
 | `SIGNUP_WATCH_INTERVAL_SECONDS` | Seconds between reads of the pending sign-ups (30) |
 | `SIGNUP_WORKER_SLOTS` | The Worker's execution slots (64). A running turn or tool call takes one while it runs; a review that waits for a reply takes none |
 
+## Run it on Superverse
+
+The repository is a Superverse application of the TypeScript base (`node-ts`, build profile `node-ts-v1`):
+[`.superverse/template.json`](.superverse/template.json), [`dex-app.yaml`](dex-app.yaml), the
+[`Makefile`](Makefile) (`make bootstrap`, `make check-static`, `make test-app`), [`AGENTS.md`](AGENTS.md) and
+[`openapi/openapi.yaml`](openapi/openapi.yaml). Superverse builds Preview and Live from this repository with
+`npm ci --ignore-scripts` and `npm run build`, without network, on Node.js 22, and runs `node . web` and
+`node . worker` from the same image.
+
+**Hosted deploy is blocked for now.** TypeScript applications cannot declare npm connectors yet: the platform's
+manifest validator accepts only Go module paths. `dex-app.yaml` already names
+`@superdurable/connector-slack` 0.6.0 and `@superdurable/connector-google-gmail` 0.2.2 with `package` and an exact
+`version`, the shape the platform's PGTSCONN plan proposes; that plan is not merged, and the field shape may change.
+
+- **Flow.** Only the pi session Flow, `SignupReviewPiAgentFlow`, runs hosted. Its graph is committed in
+  [`flow-definitions/signup-review-pi-agent.json`](flow-definitions/signup-review-pi-agent.json), written by the
+  installed dex-agents (`make check-fdg-v2` fails when it drifts); the platform publishes it, and the Worker uploads
+  no Flow definition. The Claude Agent SDK harness is not supported on Superverse and runs only locally.
+  `SIGNUP_AGENT_HARNESS` other than `pi` refuses to start hosted.
+- **Project configuration.** Set the application environment in Configuration: `REVIEW_API_URL`, the secrets
+  `REVIEW_API_KEY` and `ANTHROPIC_API_KEY`, `SIGNUP_REVIEW_SINCE`, and optionally `SIGNUP_AGENT_PI_MODEL`,
+  `SIGNUP_WATCH_INTERVAL_SECONDS` and the secret `GITHUB_TOKEN`. The processes apply it to a copy of their
+  environment, never to `process.env`. The platform sets `PORT` (8080 on Live, 3000 on Preview, web only),
+  `DEX_FLOW_SERVICE_ADDRESS`, `DEX_TOKEN_URL`, `DEX_BLOB_CACHE_DIR` and, on Live, `DEX_API_KEY` and `DEX_SERVER_ID`.
+- **Connections.** `review-slack` is the Project's shared Slack connection. Fill in the `signup-review-reply`
+  binding in Studio Setup: the review channel and the reviewers (at least one). That binding is the only source of
+  both hosted: `SLACK_REVIEW_CHANNEL` and `SIGNUP_REVIEWER_SLACK_IDS` are not read there, and post_review posts in
+  the binding's channel. `welcome-gmail` is a user-owned Google OAuth client connection; there is no platform-shared
+  Google client.
+- **Processes.** `node . web` serves `GET /api/health` (the manifest's `healthPath`) and the relayed Slack events at
+  `/triggers/slack/cmV2aWV3LXNsYWNr` on `PORT`, and registers that route at the platform. `node . worker` reads
+  `/tmp/superverse-app/runtime.yaml` (slots from `application.workerSlots`, 16, and the drain timeout), answers
+  `/readyz` once its slots registered, and runs the watcher. Both write only under `/tmp` and stop on SIGTERM; the
+  Worker drains its running tasks first.
+- **Relay.** The platform routes Slack events by workspace, not by channel, so the binding's channel and the target
+  filter decide. It delivers each event to the web process once: it does not retry yet (superversev2#1058), and a
+  web rollout has a short window without a receiver; see Limits. Unlike Socket Mode, the relay sends every
+  registered deployment's connection its own copy of the events.
+- **Network.** Egress is public HTTPS on port 443 only: `REVIEW_API_URL` and the profile pages `fetch_profile`
+  reads must be on 443.
+
+The hosted path is tested only with the connector's local stand-ins and the app tests' Socket Mode stand-in; it has
+not been verified against a live relay.
+
 ## Tests
 
-`npm test` runs the review end to end, once per harness, on a private local Dex engine (`dexcli dev --engine zd`, started
+`make test-app` runs the app tests of the base harness ([`apptest/`](apptest)): each test starts its own
+`dex-server-zd dev` (from `DEX_SERVER_ZD_BINARY`, by default the one on `PATH`), runs the hosted pi session Flow on a
+pull Worker with the application's watcher and reply Trigger, and serves the HTTP API in front of it: a review
+approved and sent through Slack replies, only a reviewer's replies in review threads delivered, and the health
+route.
+
+`npm test` (or `make test`) runs the review end to end, once per harness, on a private local Dex engine (`dexcli dev --engine zd`, started
 by the test; `dexcli` and `dex-server-zd` must be on `PATH`) with a scripted model, the Slack and Gmail
 connector mocks for the tools, and a test-only ReviewAPI stub. pi gets a scripted model client; the Claude Agent SDK
 runs the real bundled Claude Code CLI against a scripted local Messages API, with a dummy key and no
@@ -312,7 +369,10 @@ redirects to private addresses, and for linear-time parsing of adversarial HTML.
 - Reviews started by the earlier, polling version of this demo keep their thread in a poller Flow that no
   longer exists: finish them before upgrading.
 - The Claude harness's `login` mode is for running the demo on your own machine. The Claude Agent SDK
-  documentation says products built on it authenticate with an API key; use `api-key` anywhere else.
+  documentation says products built on it authenticate with an API key; use `api-key` anywhere else. The harness
+  does not run on Superverse.
+- Hosted, the review channel and reviewers come from the binding, which the connector reads at start: changing
+  them in Studio Setup takes effect when the processes restart.
 - `fetch_profile` refuses to run with `NODE_USE_ENV_PROXY` set, and connects through its own HTTPS agent,
   so no proxy resolves a host past the address check.
 
