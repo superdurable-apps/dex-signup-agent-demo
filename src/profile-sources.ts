@@ -122,7 +122,8 @@ export function checkProfileUrl(rawUrl: string): URL {
   try {
     url = new URL(rawUrl);
   } catch {
-    throw new ProfileSourceError(`not a valid URL: ${rawUrl.slice(0, 200)}`);
+    // Quoted as JSON: the URL comes from the model, and a raw line break in it could pass for another turn-note entry.
+    throw new ProfileSourceError(`not a valid URL: ${JSON.stringify(rawUrl.slice(0, 200))}`);
   }
   if (url.protocol !== "https:") {
     throw new ProfileSourceError("only https URLs can be fetched");
@@ -241,7 +242,7 @@ export async function fetchPublicPage(
       if (error instanceof ProfileSourceError) {
         throw error;
       }
-      throw new ProfileSourceError(`fetching ${url.hostname} failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}`);
+      throw new ProfileSourceError(`fetching ${url.hostname} failed: ${(error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").slice(0, 200)}`);
     }
     if (response.status >= 300 && response.status < 400 && response.location !== undefined) {
       if (redirects >= profilePageLimits.maxRedirects) {
@@ -338,7 +339,7 @@ export class PublicProfileSources implements ProfileSources {
 
   public async fetchGitHubUser(login: string, signal: AbortSignal): Promise<GitHubUserSummary> {
     if (!githubLoginPattern.test(login)) {
-      throw new ProfileSourceError(`${login.slice(0, 60)} is not a GitHub login`);
+      throw new ProfileSourceError(`${JSON.stringify(login.slice(0, 60))} is not a GitHub login`);
     }
     const user = (await this.getJson(`/users/${login}`, signal)) as Record<string, unknown>;
     const repositories = await this.getJson(`/users/${login}/repos?sort=pushed&per_page=30&type=owner`, signal);

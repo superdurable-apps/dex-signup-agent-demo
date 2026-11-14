@@ -69,16 +69,14 @@ const draftOf = (output: string): Draft | undefined => {
 };
 
 /**
- * The review's thread and latest draft from the session's tool records. A draft counts only from a structured record
- * (a stored tool result or the running turn's call record), never from a turn note, whose free text could fake one.
- * The thread may come from a turn note too, since a turn that fails after its post_review keeps that call only in the
- * note; the tools post only in the configured review channel, so a thread read there can at worst name another
- * thread of that channel.
+ * The review's thread and latest draft from the session's tool records. Both count only from a structured record (a
+ * stored tool result or the running turn's call record), never from a turn note: its free text, such as a fetched
+ * page's or an error's, could fake an entry and steer the tools into another review's thread. A turn note's mention
+ * of post_review only marks the review as possibly posted, so post_review is never called again.
  */
 export function reviewRecordOf(history: ToolHistory): ReviewRecord {
   const reviews = history.records.filter((record) => record.tool === "post_review");
-  const posted = reviews.filter((record) => record.outcome === "succeeded" && threadOf(record.output) !== undefined);
-  const thread = posted.find((record) => record.source !== "note") ?? posted.at(-1);
+  const thread = reviews.find((record) => record.source !== "note" && record.outcome === "succeeded" && threadOf(record.output) !== undefined);
   const drafts = history.records
     .filter((record) => record.source !== "note" && (record.tool === "post_review" || record.tool === "post_draft") && record.outcome === "succeeded")
     .map((record) => draftOf(record.output))
@@ -101,6 +99,8 @@ export class ReviewSessions {
   private connected: { client: Client; sessionFlow: ReviewSessionFlow } | undefined;
   /** Review thread timestamp to account, for this process. A review's thread never changes once posted. */
   private readonly threads = new Map<string, string>();
+  /** Threads two accounts claimed: they belong to neither. */
+  private readonly disputedThreads = new Set<string>();
   private readonly indexedAccounts = new Set<string>();
   private refresh: { readonly startedAt: number; readonly done: Promise<void> } | undefined;
 
@@ -120,20 +120,41 @@ export class ReviewSessions {
     return reviewRecordOf(await this.toolRecords(accountId));
   }
 
-  /** Records which review a thread belongs to; post_review calls it once its post went out. */
+  /**
+   * Records which review a thread belongs to; post_review calls it once its post went out. A thread is never moved to
+   * another account: a thread two accounts claim belongs to neither, for as long as this process runs, and is logged.
+   */
   public rememberThread(threadTs: string, accountId: string): void {
-    this.threads.set(threadTs, accountId);
     this.indexedAccounts.add(accountId);
+    if (this.disputedThreads.has(threadTs)) {
+      return;
+    }
+    const known = this.threads.get(threadTs);
+    if (known !== undefined && known !== accountId) {
+      this.threads.delete(threadTs);
+      this.disputedThreads.add(threadTs);
+      console.warn(`review threads: thread ${threadTs} is claimed by the reviews of ${known} and ${accountId}; its replies reach neither`);
+      return;
+    }
+    this.threads.set(threadTs, accountId);
+  }
+
+  /** Whether two accounts claimed the thread, so that it belongs to neither. */
+  public isThreadDisputed(threadTs: string): boolean {
+    return this.disputedThreads.has(threadTs);
   }
 
   /**
-   * The account whose review thread `threadTs` is, or `undefined` when no running review posted it. A thread this
+   * The account whose review thread `threadTs` is, or `undefined` when no running review posted it, or two did. A thread this
    * process does not know yet is looked up in Dex: the running sessions of the session Flow type and their own
    * records, read by a lookup that started at or after `since`, so it cannot miss a review posted before then. The
    * index is only this process's cache: a restart, or another process such as the hosted web process, rebuilds it
    * the same way. A failed lookup rejects, and the caller tries again later.
    */
   public async accountOfThread(threadTs: string, since: number): Promise<string | undefined> {
+    if (this.disputedThreads.has(threadTs)) {
+      return undefined;
+    }
     const known = this.threads.get(threadTs);
     if (known !== undefined) {
       return known;
@@ -408,16 +429,22 @@ export function toolRecordsOf(messages: readonly AgentMessage[], activeToolCalls
       records.push({ tool, outcome: outcomeOfResult(tool, output), output, position: message.sequence, source: "result" });
     } else if (message.role === "user" && message.origin !== undefined && noteOrigins.has(message.origin)) {
       const text = message.text ?? "";
-      // From a note: evidence of a send, a decision's success, which a decision tool checks against the account
-      // before it relies on it, and a review post, for its thread only. Never a draft post: a note's free text could
-      // fake one after a real send.
+      // From a note: only what fails closed if the note's free text fakes it. Evidence of a send, which only ever
+      // blocks a send; a decision's success, which a decision tool checks against the account before it relies on it,
+      // so it can at most skip a request the account no longer needs; and a post_review entry, as a review that may
+      // have been posted, whatever its status, which only blocks another post. Never a draft post or a thread: those
+      // steer the tools.
       for (const outcome of noteSendEvidence(text)) {
         records.push({ tool: sendTool, outcome, output: "", position: message.sequence, source: "note" });
       }
-      for (const entry of noteEntries(text)) {
-        if ((entry.tool === "approve_account" || entry.tool === "reject_account" || entry.tool === "post_review") && entry.status !== undefined) {
-          records.push({ tool: entry.tool, outcome: outcomeOfStatus(entry.status), output: entry.output.trim(), position: message.sequence, source: "note" });
+      const entries = noteEntries(text);
+      for (const entry of entries) {
+        if ((entry.tool === "approve_account" || entry.tool === "reject_account") && entry.status !== undefined) {
+          records.push({ tool: entry.tool, outcome: outcomeOfStatus(entry.status), output: entry.output, position: message.sequence, source: "note" });
         }
+      }
+      if (entries.some((entry) => entry.tool === "post_review")) {
+        records.push({ tool: "post_review", outcome: "unknown", output: "", position: message.sequence, source: "note" });
       }
     }
   }

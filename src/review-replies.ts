@@ -79,7 +79,7 @@ export interface ReviewReplyParts {
  * The thread decides the session, and Trigger routing is synchronous, so this target looks the thread up first (see
  * {@link ReviewSessions.accountOfThread}) and then hands the event to a Dex RPC target bound to that session. A
  * failed lookup throws and the event stays in the inbox for a retry; an event for a closed session is undeliverable
- * and consumed by the RPC target.
+ * and consumed by the RPC target; a thread two reviews claim is dropped.
  */
 export function createReviewReplyTarget(parts: ReviewReplyParts): TriggerTarget<MessageEvent> {
   const logger = parts.logger ?? defaultTriggerLogger;
@@ -100,10 +100,15 @@ export function createReviewReplyTarget(parts: ReviewReplyParts): TriggerTarget<
       const threadTs = event.payload.threadTimestamp;
       const accountId = await parts.sessions.accountOfThread(threadTs, Date.now());
       if (accountId === undefined) {
+        if (parts.sessions.isThreadDisputed(threadTs)) {
+          logTriggerRecord(logger, context, "warn", "trigger event skipped: two reviews claim the thread", { event_id: event.id, thread_ts: threadTs });
+          return;
+        }
         if (Date.now() - Number(threadTs.split(".")[0]) * 1_000 < recentThreadMs) {
           throw new Error(`thread ${threadTs} is not a known review thread yet`);
         }
-        logTriggerRecord(logger, context, "info", "trigger event skipped: not a running review's thread", { event_id: event.id, thread_ts: threadTs });
+        // A warning: it may be a real reply in a review whose post_review result was lost.
+        logTriggerRecord(logger, context, "warn", "trigger event skipped: not a running review's thread", { event_id: event.id, thread_ts: threadTs });
         return;
       }
       return deliverTo(reviewSessionId(accountId)).handleTrigger(context, event);

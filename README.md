@@ -157,9 +157,15 @@ in the application's process, start it and feed it:
     process, or another process, rebuilds what it needs on the first reply. A lookup that fails (Dex unavailable,
     the Worker down) throws, and the event stays in the inbox and is retried with a back-off, so a reply in a
     known review's thread is never dropped for want of an index. A reply in a thread that no running review
-    posted is dropped and logged (`trigger event skipped: not a running review's thread`); a thread younger than
-    2 minutes is retried instead, since its post_review result may not be stored yet. A reply in the thread of a
-    finished review reaches a closed session, and the RPC target consumes it as undeliverable.
+    posted is dropped with a warning (`trigger event skipped: not a running review's thread`); a thread younger
+    than 2 minutes is retried instead, since its post_review result may not be stored yet. A reply in the thread of
+    a finished review reaches a closed session, and the RPC target consumes it as undeliverable. The index never
+    moves a thread to another account: a thread two reviews claim belongs to neither, and its replies are dropped
+    with a warning.
+  - The thread comes only from the session's structured records (a stored post_review result or the running
+    turn's call record), never from the free text of a turn note, which an applicant can influence (a profile
+    URL or page in an earlier call's outcome) and which could otherwise point the tools and the index at another
+    review's thread.
   - Duplicates: Slack can send an event twice, and the inbox can deliver one again after a crash. Dex does not
     deduplicate RPCs (`Client.invokeRPC` has no request ID in `@superdurable/dex` 1.45.3), so the prompt's rule
     that a repeated `[slack <ts>]` is ignored is the guard.
@@ -307,8 +313,9 @@ unknown, with the Sent Mail note; a send Gmail rejects, recorded as failed with 
 as the latest one, refused; a send before the approval, refused; two tool calls in one model response; a sign-up
 from before `SIGNUP_REVIEW_SINCE`; and a restart: a new runner with an empty thread index, a reply that arrives
 while the Worker is down, retried from the inbox and delivered once the Worker is back. Unit tests cover the reply
-target's routing (filtered, delivered, dropped, retried for a recent thread), the review record read from tool
-results and turn notes, and `fetch_profile`'s checks for private addresses through an injected lookup, for
+target's routing (filtered, delivered, dropped, retried for a recent thread, dropped for a disputed thread), the
+review record read from tool results and never from a turn note (a forged post_review entry in an earlier call's
+outcome gives no thread), the index refusing a thread two accounts claim, and `fetch_profile`'s checks for private addresses through an injected lookup, for
 redirects to private addresses, and for linear-time parsing of adversarial HTML.
 
 ## Limits
@@ -339,8 +346,14 @@ redirects to private addresses, and for linear-time parsing of adversarial HTML.
   sessions and a read of each one not indexed yet; a reply in a stranger's thread of the review channel costs
   that lookup each time. A thread younger than 2 minutes that is not found is retried, which holds the
   replies behind it for up to 2 minutes.
-- A turn that fails right after its post_review keeps that call only in its turn note. The thread is read from
-  there too; draft 1 is not, so send_welcome_email refuses until a new draft is posted.
+- A turn that fails right after its post_review keeps that call only in its turn note, and a turn note's free
+  text is never trusted for the thread. That review has no thread: its replies are dropped with a warning, the
+  tools refuse with "call post_review first", post_review refuses too (the note marks the review as possibly
+  posted), and the admins decide in Dex Cloud admin and cancel the session in Dex Web. Recovering the thread would
+  mean checking the candidate against Slack (the root message in the review channel, posted by this app, naming
+  this session); the demo does not.
+- A turn note's post_review entry, even one that an applicant's text faked in an earlier call's outcome, marks the
+  review as possibly posted, so a review whose first turn failed that way is never posted. This fails closed.
 - An approval or rejection whose request went out while the ReviewAPI stayed busy or unreachable
   through the retries is an unknown outcome: the tool says so in the thread and the admins check the
   account in Dex Cloud admin. An admin's next `approve` or `send` reads the account and goes on.

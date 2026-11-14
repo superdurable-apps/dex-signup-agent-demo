@@ -18,6 +18,8 @@ const reply = (threadTimestamp: string, extra: Partial<MessageEvent> = {}): Trig
   payload: { teamId: "T1", channelId: "CREVIEWS01", timestamp: "1710000200.000200", threadTimestamp, userId: "UREVIEWER1", text: "  approve \n", ...extra },
 });
 
+const disputedThread = `${Math.floor(Date.now() / 1_000)}.000900`;
+
 function harness(threads: Record<string, string>) {
   const invoked: { flowId: string; input: unknown }[] = [];
   const records: { message: string; attributes: TriggerLogAttributes }[] = [];
@@ -27,8 +29,9 @@ function harness(threads: Record<string, string>) {
   const sessions = {
     accountOfThread: async (threadTs: string) => {
       lookups.push(threadTs);
-      return threads[threadTs];
+      return threadTs === disputedThread ? undefined : threads[threadTs];
     },
+    isThreadDisputed: (threadTs: string) => threadTs === disputedThread,
   } as unknown as ReviewSessions;
   const target = createReviewReplyTarget({
     client,
@@ -65,4 +68,11 @@ test("a reply in an old thread that is no running review's is dropped; in a rece
   // A review post younger than two minutes may not be in its session's records yet: the event stays in the inbox.
   await assert.rejects(target.handleTrigger(newTriggerContext(), reply(nowTs())), /is not a known review thread yet/);
   assert.deepEqual(invoked, []);
+});
+
+test("a reply in a thread two reviews claim is dropped at once, even when the thread is recent", async () => {
+  const { target, invoked, records } = harness({});
+  await target.handleTrigger(newTriggerContext(), reply(disputedThread));
+  assert.deepEqual(invoked, []);
+  assert.equal(records.filter((record) => record.message === "trigger event skipped: two reviews claim the thread").length, 1);
 });

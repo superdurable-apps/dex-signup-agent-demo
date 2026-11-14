@@ -482,7 +482,8 @@ export async function runSignupTool(tool: SignupTool, rawArgs: unknown, call: Si
     if (error instanceof ToolExecutionError || tool.effect !== "read") {
       throw error;
     }
-    // A read that failed, such as a 404 page, is information for the model, not a crash.
-    throw new ToolExecutionError(`${tool.name} failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`);
+    // A read that failed, such as a 404 page, is information for the model, not a crash. On one line: the text can hold
+    // what an applicant chose, and a line break could pass for another entry of a turn note.
+    throw new ToolExecutionError(`${tool.name} failed: ${(error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").slice(0, 300)}`);
   }
 }
