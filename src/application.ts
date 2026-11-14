@@ -60,7 +60,12 @@ export interface Application {
   /** The API of openapi/openapi.yaml beyond GET /api/health; the review happens in Slack, so there is none. */
   routes(client: Client): Route[];
   readonly page: string;
-  /** Starts the mode's background work over the Client: the watcher (all but web) and the reply Trigger (all but worker). */
+  /**
+   * Gives the tools and the thread index the process's Client. Call it right after the Client is created, before the
+   * Worker starts: a review whose turn was in flight at a restart runs its tool Steps as soon as the Worker pulls.
+   */
+  connect(client: Client): void;
+  /** Starts the mode's background work over the connected Client: the watcher (all but web) and the reply Trigger (all but worker). */
   start(client: Client): RunningApplication;
 }
 
@@ -108,8 +113,10 @@ export async function loadApplication(options: ApplicationOptions): Promise<Appl
     isHosted,
     routes: () => [],
     page,
-    start(client) {
+    connect(client) {
       services.sessions.connect(client, sessionFlow);
+    },
+    start(client) {
       const stopping = new AbortController();
       const tasks: Promise<void>[] = [];
       if (options.mode !== "web") {

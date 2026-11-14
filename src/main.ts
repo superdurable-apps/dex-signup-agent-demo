@@ -13,7 +13,7 @@ import { Client, Registry, Worker, openBlobCache, type BlobCache } from "@superd
 import { loadApplication, type Application } from "./application.ts";
 import { dexOptions } from "./dex.ts";
 import { createHttpServer } from "./http.ts";
-import { serveRelayedReplies } from "./review-replies.ts";
+import { isRelayedReplyRequest, serveRelayedReplies } from "./review-replies.ts";
 import { loadRuntime, type RuntimeSettings } from "./runtime.ts";
 
 const SERVER_STOP_GRACE_MS = 10_000;
@@ -41,6 +41,7 @@ async function runLocal(application: Application): Promise<void> {
   const registry = new Registry([...application.flows]);
   const cache = blobCache("local");
   const client = new Client(registry, cache, options);
+  application.connect(client);
   const worker = new Worker(registry, cache, { ...options, pull: { maxConcurrentTasks: application.config.workerSlots } });
   await worker.start();
   await worker.waitPullRegistered({ timeoutMs: 30_000 });
@@ -61,11 +62,16 @@ async function runWeb(application: Application): Promise<void> {
   const registry = new Registry([...application.flows]);
   const cache = blobCache("web");
   const client = new Client(registry, cache, dexOptions(process.env));
+  application.connect(client);
   let running: ReturnType<Application["start"]> | undefined;
-  // Relayed events before the runner starts are answered 503, which the platform's relay may retry.
+  // A relayed event before the runner starts is answered 503, as the runner itself answers while it starts.
   const server = createHttpServer(application.routes(client), application.page, (incoming, outgoing) => {
     if (running?.replies !== undefined) {
       return serveRelayedReplies(running.replies, incoming, outgoing);
+    }
+    if (isRelayedReplyRequest(incoming)) {
+      outgoing.writeHead(503).end();
+      return true;
     }
     return false;
   });
@@ -91,8 +97,9 @@ async function runWorker(application: Application, settings: RuntimeSettings): P
     ...options,
     pull: { maxConcurrentTasks: settings.maxConcurrentTasks, stopDrainTimeoutMs: settings.stopDrainTimeoutMs, stopOnPermanentStreamRejection: true },
   });
-  // The tools and the watcher read and start sessions through a Client.
+  // The tools and the watcher read and start sessions through a Client, connected before the Worker pulls.
   const client = new Client(registry, cache, options);
+  application.connect(client);
   let running: ReturnType<Application["start"]> | undefined;
   let ready = false;
   let stopping = false;

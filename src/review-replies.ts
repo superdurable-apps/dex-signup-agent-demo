@@ -144,9 +144,12 @@ export function createReviewReplyRunner(
   });
 }
 
+/** Whether the request is for the connection's relay path. */
+export const isRelayedReplyRequest = (request: IncomingMessage): boolean => request.url?.split("?")[0] === relayedTriggerPath(reviewSlackConnection);
+
 /** Serves the relayed Slack events at the connection's relay path; answers false for any other path. */
 export function serveRelayedReplies(runner: MessageTriggerRunner, request: IncomingMessage, response: ServerResponse): boolean {
-  if (request.url?.split("?")[0] !== relayedTriggerPath(reviewSlackConnection)) {
+  if (!isRelayedReplyRequest(request)) {
     return false;
   }
   void runner.serveHTTP(request, response);

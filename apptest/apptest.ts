@@ -88,6 +88,7 @@ async function start(cleanups: Cleanup[], name: string, options: Omit<Applicatio
   cleanups.push(() => recordEngine(name, client));
   // Adapted from the base: the application's background work (the watcher and the Slack reply Trigger) runs too, and
   // stops before the report reads the engine.
+  application.connect(client);
   const running = application.start(client);
   cleanups.push(() => running.stop());
   const server = createHttpServer(application.routes(client), application.page);
