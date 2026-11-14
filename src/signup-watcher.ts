@@ -6,9 +6,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { IdReusePolicy, type Client } from "@superdurable/dex";
 import { startAgentSession } from "@superdurable/dex-agents";
 
-import type { Account, ReviewApiClient } from "./review-api.js";
-import { reviewSessionId, type ReviewSessionFlow } from "./review-state.js";
-import { firstReviewMessage } from "./signup-agent.js";
+import type { Account, ReviewApiClient } from "./review-api.ts";
+import { reviewSessionId, type ReviewSessionFlow } from "./review-state.ts";
+import { firstReviewMessage } from "./signup-agent.ts";
 
 export interface SignupWatcherParts {
   readonly client: Client;

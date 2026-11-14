@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { decideNextStep, type SeenResult } from "./scripted-signup-agent.js";
+import { decideNextStep, type SeenResult } from "./scripted-signup-agent.ts";
 
 type JsonObject = Record<string, unknown>;
 type ContentBlock = { type: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: JsonObject };
@@ -18,7 +18,11 @@ export class ScriptedMessagesApi {
   /** Every tool name a model request offered, as the CLI named it. */
   public readonly offeredTools = new Set<string>();
 
-  private constructor(private readonly server: Server) {}
+  private readonly server: Server;
+
+  private constructor(server: Server) {
+    this.server = server;
+  }
 
   public static async start(): Promise<ScriptedMessagesApi> {
     let api: ScriptedMessagesApi | undefined;

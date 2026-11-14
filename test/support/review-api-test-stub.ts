@@ -4,7 +4,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import type { Account } from "../../src/review-api.js";
+import type { Account } from "../../src/review-api.ts";
 
 /** One decision request the stub received. */
 export interface RecordedDecision {
@@ -39,7 +39,11 @@ export class ReviewApiTestStub {
   /** Gets answered with a 503 before the next one succeeds. */
   public failingGets = 0;
 
-  private constructor(private readonly server: Server) {}
+  private readonly server: Server;
+
+  private constructor(server: Server) {
+    this.server = server;
+  }
 
   public static async start(): Promise<ReviewApiTestStub> {
     let stub: ReviewApiTestStub | undefined;

@@ -1,6 +1,6 @@
 // TEST ONLY: a scripted model that follows the agent's procedure, shared by the harness tests, and fixed profiles.
 
-import type { GitHubUserSummary, ProfilePage, ProfileSources } from "../../src/profile-sources.js";
+import type { GitHubUserSummary, ProfilePage, ProfileSources } from "../../src/profile-sources.ts";
 
 /** One scripted model response: an answer, tool calls (several in one response when asked), or a failed call. */
 export type ScriptedStep =

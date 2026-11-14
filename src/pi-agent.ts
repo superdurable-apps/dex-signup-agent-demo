@@ -6,16 +6,19 @@ import { getBuiltinModels, type BuiltinProvider } from "@earendil-works/pi-ai/pr
 import { createBuiltinAgentSessionFlow, functionTool, type ModelClient } from "@superdurable/dex-agents/builtin-loop";
 import { createPiAiModelClient } from "@superdurable/dex-agents-pi";
 
-import type { ReviewSessionFlow } from "./review-state.js";
-import { createSignupConnectorTools, createSignupTools, runSignupTool, signupAgentPrompt, toolJsonSchema, type SignupServices } from "./signup-agent.js";
+import type { ReviewSessionFlow } from "./review-state.ts";
+import { createSignupConnectorTools, createSignupTools, runSignupTool, signupAgentPrompt, toolJsonSchema, type SignupServices } from "./signup-agent.ts";
 
 export const piHarnessLabel = "pi (Dex built-in agent loop with pi-ai)";
 
-/** A pi-ai model, `<provider>/<model ID>` of its built-in catalog; pi-ai reads the provider key from the environment. */
-export function piModel(name: string): ModelClient {
+/**
+ * A pi-ai model, `<provider>/<model ID>` of its built-in catalog, with the provider key; without one pi-ai reads the
+ * provider key from the process environment.
+ */
+export function piModel(name: string, apiKey?: string): ModelClient {
   const [provider, modelId] = [name.slice(0, name.indexOf("/")), name.slice(name.indexOf("/") + 1)];
   const model = getBuiltinModels(provider as BuiltinProvider).find((candidate) => candidate.id === modelId) as Model<Api> | undefined;
-  return createPiAiModelClient(model ?? (() => { throw new Error(`pi model ${name} is not in pi-ai's catalog`); })());
+  return createPiAiModelClient(model ?? (() => { throw new Error(`pi model ${name} is not in pi-ai's catalog`); })(), apiKey === undefined ? undefined : { apiKey });
 }
 
 export function createPiSignupAgent(services: SignupServices, model: ModelClient): ReviewSessionFlow {

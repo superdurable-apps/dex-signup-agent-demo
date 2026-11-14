@@ -2,9 +2,9 @@
 
 import { ScriptedModelClient } from "@superdurable/dex-agents/testing";
 
-import { createPiSignupAgent } from "../src/pi-agent.js";
-import { decideNextStep } from "./support/scripted-signup-agent.js";
-import { registerSignupReviewScenarios } from "./support/signup-review-scenarios.js";
+import { createPiSignupAgent } from "../src/pi-agent.ts";
+import { decideNextStep } from "./support/scripted-signup-agent.ts";
+import { registerSignupReviewScenarios } from "./support/signup-review-scenarios.ts";
 
 const scriptedModel = new ScriptedModelClient((request) => {
   const seen = ScriptedModelClient.toolResults(request).map((result) => ({ name: result.toolName, output: result.output }));

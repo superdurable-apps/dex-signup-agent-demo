@@ -6,9 +6,9 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createClaudeSignupAgent } from "../src/claude-agent.js";
-import { ScriptedMessagesApi } from "./support/scripted-messages-api.js";
-import { registerSignupReviewScenarios } from "./support/signup-review-scenarios.js";
+import { createClaudeSignupAgent } from "../src/claude-agent.ts";
+import { ScriptedMessagesApi } from "./support/scripted-messages-api.ts";
+import { registerSignupReviewScenarios } from "./support/signup-review-scenarios.ts";
 
 const stateDirectory = mkdtempSync(join(tmpdir(), "signup-agent-claude-"));
 let messagesApi: ScriptedMessagesApi;

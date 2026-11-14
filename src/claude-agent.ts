@@ -5,8 +5,8 @@ import { tool } from "@anthropic-ai/claude-agent-sdk";
 import { ToolExecutionError } from "@superdurable/dex-agents";
 import { createClaudeAgentSessionFlow, currentDeferredToolExecution } from "@superdurable/dex-agents-claude-agent-sdk";
 
-import type { ReviewSessionFlow } from "./review-state.js";
-import { createSignupConnectorTools, createSignupTools, runSignupTool, signupAgentPrompt, type SignupServices } from "./signup-agent.js";
+import type { ReviewSessionFlow } from "./review-state.ts";
+import { createSignupConnectorTools, createSignupTools, runSignupTool, signupAgentPrompt, type SignupServices } from "./signup-agent.ts";
 
 export const claudeHarnessLabel = "Claude Agent SDK (Claude Code CLI)";
 

@@ -326,7 +326,11 @@ function decodeEntities(text: string): string {
 
 /** The real sources: public web pages, and the GitHub public REST API with an optional token for its rate limit. */
 export class PublicProfileSources implements ProfileSources {
-  public constructor(private readonly options: { readonly githubToken?: string } = {}) {}
+  private readonly options: { readonly githubToken?: string };
+
+  public constructor(options: { readonly githubToken?: string } = {}) {
+    this.options = options;
+  }
 
   public fetchProfilePage(url: string, signal: AbortSignal): Promise<ProfilePage> {
     return fetchPublicPage(url, signal);

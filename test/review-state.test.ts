@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { buildTurnFailureNote, outcomeUnknownToolResult, type AgentMessage, type AgentSnapshot, type AgentToolCallRecord } from "@superdurable/dex-agents";
 
-import { earlierDecision, jsonValueEnd, noteEntries, outcomeOfResult, reviewRecordOf, succeededOutput, toolRecordsOf, wasDraftSent, type ToolRecord } from "../src/review-state.js";
+import { earlierDecision, jsonValueEnd, noteEntries, outcomeOfResult, reviewRecordOf, succeededOutput, toolRecordsOf, wasDraftSent, type ToolRecord } from "../src/review-state.ts";
 
 const at = "2026-11-13T10:00:00.000Z";
 const message = (sequence: number, role: AgentMessage["role"], text: string | null, extra: Partial<AgentMessage> = {}): AgentMessage =>

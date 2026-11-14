@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { checkProfileUrl, fetchPublicPage, htmlToText, isPublicAddress, ProfileSourceError, type Lookup, type PageTransport } from "../src/profile-sources.js";
+import { checkProfileUrl, fetchPublicPage, htmlToText, isPublicAddress, ProfileSourceError, type Lookup, type PageTransport } from "../src/profile-sources.ts";
 
 const signal = () => new AbortController().signal;
 

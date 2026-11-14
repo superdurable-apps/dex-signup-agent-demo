@@ -8,8 +8,8 @@ import { newTriggerContext, type TriggerEvent, type TriggerLogAttributes } from 
 import type { MessageEvent } from "@superdurable/connector-slack";
 import type { Client } from "@superdurable/dex";
 
-import { createReviewReplyTarget, reviewReplyText } from "../src/review-replies.js";
-import type { ReviewSessionFlow, ReviewSessions } from "../src/review-state.js";
+import { createReviewReplyTarget, reviewReplyText } from "../src/review-replies.ts";
+import type { ReviewSessionFlow, ReviewSessions } from "../src/review-state.ts";
 
 const nowTs = () => `${Math.floor(Date.now() / 1_000)}.000100`;
 const reply = (threadTimestamp: string, extra: Partial<MessageEvent> = {}): TriggerEvent<MessageEvent> => ({

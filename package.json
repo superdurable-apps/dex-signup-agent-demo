@@ -9,10 +9,10 @@
     "node": "^22.19.0 || ^24.0.0"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "npm run build && node --env-file-if-exists=.env dist/src/main.js",
-    "test": "npm run build && node --test --test-force-exit --test-concurrency=1 'dist/test/**/*.test.js'"
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "start": "npm run build && node --env-file-if-exists=.env dist/main.js",
+    "test": "node --test --test-force-exit --test-concurrency=1 'test/**/*.test.ts'"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.323",
@@ -26,14 +26,16 @@
     "@superdurable/dex-agents": "0.6.8",
     "@superdurable/dex-agents-claude-agent-sdk": "0.6.8",
     "@superdurable/dex-agents-pi": "0.6.8",
+    "yaml": "2.9.1",
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "typescript": "^5.9.0"
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3"
   },
   "overrides": {
     "@superdurable/dex": "$@superdurable/dex",
     "@superdurable/connectors-sdk": "$@superdurable/connectors-sdk"
-  }
+  },
+  "main": "dist/main.js"
 }

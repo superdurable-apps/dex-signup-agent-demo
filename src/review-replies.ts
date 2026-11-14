@@ -27,7 +27,7 @@ import {
 } from "@superdurable/connector-slack";
 import type { Client } from "@superdurable/dex";
 
-import { reviewSessionId, type ReviewSessionFlow, type ReviewSessions } from "./review-state.js";
+import { reviewSessionId, type ReviewSessionFlow, type ReviewSessions } from "./review-state.ts";
 
 /** The Slack connection the review posts, replies and Trigger use. */
 export const reviewSlackConnection = "review-slack";

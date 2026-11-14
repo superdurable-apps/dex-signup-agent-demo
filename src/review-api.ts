@@ -34,22 +34,26 @@ const decisionTimeoutMs = 30_000;
 
 /** A failed ReviewAPI call; `revision_conflict` carries the current account. */
 export class ReviewApiError extends Error {
-  public constructor(
-    public readonly code: ReviewApiErrorCode | "unexpected",
-    public readonly httpStatus: number,
-    message: string,
-    public readonly currentAccount?: Account,
-  ) {
+  public readonly code: ReviewApiErrorCode | "unexpected";
+  public readonly httpStatus: number;
+  public readonly currentAccount: Account | undefined;
+
+  public constructor(code: ReviewApiErrorCode | "unexpected", httpStatus: number, message: string, currentAccount?: Account) {
     super(message);
     this.name = "ReviewApiError";
+    this.code = code;
+    this.httpStatus = httpStatus;
+    this.currentAccount = currentAccount;
   }
 }
 
 /** Calls the ReviewAPI: one POST with a JSON body per operation. The key is never logged or stored in Flow state. */
 export class ReviewApiClient {
   private readonly baseUrl: string;
+  private readonly settings: { readonly baseUrl: string; readonly apiKey: string };
 
-  public constructor(private readonly settings: { readonly baseUrl: string; readonly apiKey: string }) {
+  public constructor(settings: { readonly baseUrl: string; readonly apiKey: string }) {
+    this.settings = settings;
     const url = new URL(settings.baseUrl);
     if (url.protocol !== "https:" && url.hostname !== "127.0.0.1" && url.hostname !== "localhost") {
       throw new TypeError("REVIEW_API_URL must use HTTPS");

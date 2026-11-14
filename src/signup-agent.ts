@@ -12,9 +12,9 @@ import { ToolExecutionError, ToolOutcomeUnknownError, type ToolEffect, type Tool
 import { ConnectorToolSource, connectorTool, type ConnectorPackageManifest } from "@superdurable/dex-agents/connectors";
 import { z } from "zod";
 
-import type { ProfileSources } from "./profile-sources.js";
-import { ReviewApiError, type Account, type ReviewApiClient } from "./review-api.js";
-import { accountIdOf, earlierDecision, refusedPrefix, reviewSessionId, succeededOutput, wasDraftSent, type ReviewSessions, type ReviewThread } from "./review-state.js";
+import type { ProfileSources } from "./profile-sources.ts";
+import { ReviewApiError, type Account, type ReviewApiClient } from "./review-api.ts";
+import { accountIdOf, earlierDecision, refusedPrefix, reviewSessionId, succeededOutput, wasDraftSent, type ReviewSessions, type ReviewThread } from "./review-state.ts";
 
 export const signupAgentPrompt = `You review sign-ups for Dex Cloud, a hosted platform for building durable applications and AI agents, together with the admins in Slack.
 
