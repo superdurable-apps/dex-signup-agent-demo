@@ -10,13 +10,19 @@ TESTS := 'apptest/*.test.ts'
 DEX_SERVER_ZD_BINARY ?= $(shell command -v dex-server-zd)
 export DEX_SERVER_ZD_BINARY
 
-.PHONY: bootstrap restored check-fdg-v2 check-static test-app test
+.PHONY: bootstrap restored session-graphs check-fdg-v2 check-static test-app test
 # The platform starts bootstrap with the workspace; a second run waits for the
 # first, and every other target waits for a run in progress.
 bootstrap:
 	./scripts/bootstrap.sh
 restored:
 	@mkdir -p .local && if command -v flock >/dev/null; then flock -s .local/bootstrap.lock true; fi
+# Writes both harnesses' session graphs with the Slack reply Trigger binding; check-fdg-v2 checks them.
+session-graphs: restored
+	npx --no-install dex-agents-session-graph --flow-type SignupReviewPiAgentFlow --permission signup-review.operate \
+		--trigger-bindings scripts/session-trigger-bindings.json --out flow-definitions/signup-review-pi-agent.json
+	npx --no-install dex-agents-session-graph --flow-type SignupReviewClaudeAgentFlow --permission signup-review.operate \
+		--trigger-bindings scripts/session-trigger-bindings.json --out flow-definitions/signup-review-claude-agent.json
 check-fdg-v2: restored
 	python3 ./scripts/render-flow-definitions.py
 check-static: check-fdg-v2

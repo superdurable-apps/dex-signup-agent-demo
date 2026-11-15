@@ -2246,6 +2246,66 @@
           ]
         }
       }
+    ],
+    "connectorTriggerBindings": [
+      {
+        "connectorId": "slack",
+        "triggerName": "threadReplyCreated",
+        "connectionName": "review-slack",
+        "bindingName": "signup-review-reply",
+        "modulePath": "",
+        "moduleVersion": "",
+        "releaseTag": "connectors/slack/go/v1.7.0",
+        "package": {
+          "ecosystem": "npm",
+          "name": "@superdurable/connector-slack",
+          "version": "0.7.0"
+        },
+        "configurationEnabled": true,
+        "configurationUI": {
+          "units": [
+            {
+              "id": "channel",
+              "unitId": "channelPicker",
+              "label": "Review channel",
+              "description": "Select the joined Slack channel where the agent posts each sign-up review; the picker stores its stable channel ID.",
+              "required": true,
+              "bindings": [
+                {
+                  "port": "channelId",
+                  "jsonPointer": "/channelId"
+                }
+              ]
+            },
+            {
+              "id": "message",
+              "unitId": "textInput",
+              "label": "Reviewer reply contains",
+              "description": "Enter plain text that a reviewer reply must contain to reach the agent; leave blank so every reply reaches it.",
+              "required": false,
+              "bindings": [
+                {
+                  "port": "text",
+                  "jsonPointer": "/threadReplyMatcher/messageContains"
+                }
+              ]
+            },
+            {
+              "id": "reviewers",
+              "unitId": "memberPicker",
+              "label": "Reviewers",
+              "description": "Select the workspace members whose replies in a review thread the agent acts on; at least one reviewer is required.",
+              "required": true,
+              "bindings": [
+                {
+                  "port": "memberIds",
+                  "jsonPointer": "/threadReplyMatcher/posterUserIds"
+                }
+              ]
+            }
+          ]
+        }
+      }
     ]
   }
 }

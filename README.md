@@ -68,7 +68,9 @@ fence, so a crash never posts or sends twice. approve_account and reject_account
 tool's connector call, so they take the Slack manifest's single-attempt effect. send_welcome_email makes
 its outcome post as a second connector call in its Step, under that call's own identity and fence. A
 connector write is never repeated: a provider error after the dispatch does not prove that no email went
-out, which is why the failure reply tells the admins to check Sent Mail.
+out, which is why the failure reply tells the admins to check Sent Mail. Slack 0.7.0 and Gmail 0.3.0
+declare a bounded resend (up to 3 sends), which Dex Agents 0.6.12 would turn on; the session's tool
+policies set `maxSends: 1` for every connector tool, so each call still sends once.
 
 ## The two harnesses
 
@@ -167,7 +169,7 @@ in the application's process, start it and feed it:
     URL or page in an earlier call's outcome) and which could otherwise point the tools and the index at another
     review's thread.
   - Duplicates: Slack can send an event twice, and the inbox can deliver one again after a crash. Dex does not
-    deduplicate RPCs (`Client.invokeRPC` has no request ID in `@superdurable/dex` 1.45.3), so the prompt's rule
+    deduplicate RPCs (`Client.invokeRPC` has no request ID in `@superdurable/dex` 1.45.4), so the prompt's rule
     that a repeated `[slack <ts>]` is ignored is the guard.
   - Locally the runner uses Slack Socket Mode with the connection's app-level token, and the inbox lives in
     `trigger-inboxes/` beside `connections.json`. Hosted, the shared connection has no app token, so the runner
@@ -243,17 +245,28 @@ The repository is a Superverse application of the TypeScript base (`node-ts`, bu
 `npm ci --ignore-scripts` and `npm run build`, without network, on Node.js 22, and runs `node . web` and
 `node . worker` from the same image.
 
-**Hosted deploy is blocked for now.** TypeScript applications cannot declare npm connectors yet: the platform's
-manifest validator accepts only Go module paths. `dex-app.yaml` already names
-`@superdurable/connector-slack` 0.6.0 and `@superdurable/connector-google-gmail` 0.2.2 with `package` and an exact
-`version`, the shape the platform's PGTSCONN plan proposes; that plan is not merged, and the field shape may change.
+`dex-app.yaml` names its npm connectors with `package` and an exact `version` (the platform's PGTSCONN support):
+`@superdurable/connector-slack` 0.7.0 and `@superdurable/connector-google-gmail` 0.3.0, the versions
+`package.json` pins (`make check-fdg-v2` fails when they differ).
 
 - **Flow.** Only the pi session Flow, `SignupReviewPiAgentFlow`, runs hosted. Its graph is committed in
   [`flow-definitions/signup-review-pi-agent.json`](flow-definitions/signup-review-pi-agent.json), written by the
-  installed dex-agents (`make check-fdg-v2` fails when it drifts); the platform publishes it, and the Worker uploads
-  no Flow definition. The Claude Agent SDK harness is not supported on Superverse and runs only locally.
-  `SIGNUP_AGENT_HARNESS` other than `pi` refuses to start hosted.
-- **Project configuration.** Set the application environment in Configuration: `REVIEW_API_URL`, the secrets
+  installed dex-agents; the platform publishes it, and the Worker uploads no Flow definition. The Claude Agent SDK
+  harness is not supported on Superverse and runs only locally. `SIGNUP_AGENT_HARNESS` other than `pi` refuses to
+  start hosted.
+- **Trigger binding in the graph.** Setup accepts the `signup-review-reply` binding of `dex-app.yaml` only because the
+  graph declares it in `v2.connectorTriggerBindings`, with the Setup units (review channel, reviewers, an optional
+  text filter) from [`scripts/session-trigger-bindings.json`](scripts/session-trigger-bindings.json). After a change
+  to the binding, the Slack connector version, the Flow type or the permission, or a `@superdurable/dex-agents`
+  update, write both harnesses' graphs again with `make session-graphs`, which runs for each
+  `npx --no-install dex-agents-session-graph --flow-type <type> --permission signup-review.operate
+  --trigger-bindings scripts/session-trigger-bindings.json --out flow-definitions/<graph>.json`.
+  `make check-fdg-v2` fails while a graph differs from that output, or while its binding (connection, Trigger,
+  binding name, package and version) differs from `dex-app.yaml`. Locally, the Worker uploads the graphs of
+  `flow-definitions/` at start, but the Server keeps a stored graph unless the new one was generated later, and a
+  session graph keeps its template's generation time: upload once with `Client.uploadFlowDefinitions` and `force`
+  to replace a graph without the binding.
+- **Project configuration.** Set the application environment in Setup: `REVIEW_API_URL`, the secrets
   `REVIEW_API_KEY` and `ANTHROPIC_API_KEY`, `SIGNUP_REVIEW_SINCE`, and optionally `SIGNUP_AGENT_PI_MODEL`,
   `SIGNUP_WATCH_INTERVAL_SECONDS` and the secret `GITHUB_TOKEN`. The processes apply it to a copy of their
   environment, never to `process.env`. The platform sets `PORT` (8080 on Live, 3000 on Preview, web only),
@@ -269,8 +282,8 @@ manifest validator accepts only Go module paths. `dex-app.yaml` already names
   `/readyz` once its slots registered, and runs the watcher. Both write only under `/tmp` and stop on SIGTERM; the
   Worker drains its running tasks first.
 - **Relay.** The platform routes Slack events by workspace, not by channel, so the binding's channel and the target
-  filter decide. It delivers each event to the web process once: it does not retry yet (superversev2#1058), and a
-  web rollout has a short window without a receiver; see Limits. Unlike Socket Mode, the relay sends every
+  filter decide. It retries an event the web process does not accept, which also covers the short window of a web
+  rollout without a receiver; see Limits. Unlike Socket Mode, the relay sends every
   registered deployment's connection its own copy of the events.
 - **Network.** Egress is public HTTPS on port 443 only: `REVIEW_API_URL` and the profile pages `fetch_profile`
   reads must be on 443.
@@ -325,8 +338,8 @@ redirects to private addresses, and for linear-time parsing of adversarial HTML.
   decision consistent with the account in the ReviewAPI and send only the latest posted draft.
 - A reply event can be lost before it reaches the inbox, and then nobody resends it: the admin replies
   again. That happens when Slack's delivery fails at its end of Socket Mode, or, hosted, when the platform's
-  relay cannot reach the web process (it does not retry yet, superversev2#1058; a web rollout has a short
-  window without a receiver). Once an event is in the inbox, it is delivered or explicitly dropped.
+  relay cannot reach the web process before its retries run out. Once an event is in the inbox, it is
+  delivered or explicitly dropped.
 - The connector drops every message with a subtype, so a reply sent with **Also send to channel**, a reply
   with a file, and an edit are not delivered.
 - Dex does not deduplicate RPCs, so a repeated event can reach the session twice; the agent ignores a

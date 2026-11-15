@@ -8,7 +8,7 @@ import gmailManifest from "@superdurable/connector-google-gmail/dex-connector.js
 import type { GmailConnection } from "@superdurable/connector-google-gmail";
 import slackManifest from "@superdurable/connector-slack/dex-connector.json" with { type: "json" };
 import type { Connection as SlackConnection } from "@superdurable/connector-slack";
-import { ToolExecutionError, ToolOutcomeUnknownError, type ToolEffect, type ToolSource } from "@superdurable/dex-agents";
+import { ToolExecutionError, ToolOutcomeUnknownError, type ToolEffect, type ToolPolicy, type ToolSource } from "@superdurable/dex-agents";
 import { ConnectorToolSource, connectorTool, type ConnectorPackageManifest } from "@superdurable/dex-agents/connectors";
 import { z } from "zod";
 
@@ -229,6 +229,18 @@ function manifestFor(manifest: ConnectorPackageManifest, operationId: string, de
   const factory = manifest.factories.find((entry) => entry.operationId === operationId)!;
   return { connectorId: manifest.connectorId, factories: [{ ...factory, description, inputSchema: toolJsonSchema(schema) }] };
 }
+
+/**
+ * The session tool policies of the connector tools: each call sends at most once. Slack 0.7.0 and Gmail 0.3.0 declare
+ * a bounded resend (`repeatOnUnknown: limited`, `maxSends` 3), which Dex Agents 0.6.12 turns on; `maxSends: 1` keeps
+ * one attempt, which the tools' refusals after an unknown outcome assume. The effect still comes from the manifest.
+ */
+export const signupConnectorToolPolicies: Readonly<Record<string, ToolPolicy>> = Object.fromEntries(
+  ["post_review", "post_draft", "reply_in_thread", "approve_account", "reject_account", "send_welcome_email"].map((name) => [
+    name,
+    { effect: "non_idempotent_write", requiresApproval: false, maxSends: 1 },
+  ]),
+);
 
 /**
  * The tools that post to Slack or send the email, as Dex connector tools: each call is one connector call in its own
