@@ -3,7 +3,8 @@
 // ReviewAPI says about the account, and approve_account, reject_account and send_welcome_email post their outcome in
 // the thread.
 
-import { createCall, newMutationBranch, runMutation, type Call, type Mutation, type MutationAttempt } from "@superdurable/connectors-sdk";
+import { createCall, newMutationBranch, runMutation, type Call, type ConnectionRef, type Mutation, type MutationAttempt, type OperationRef } from "@superdurable/connectors-sdk";
+import type { AsyncContext } from "@superdurable/dex";
 import gmailManifest from "@superdurable/connector-google-gmail/dex-connector.json" with { type: "json" };
 import type { GmailConnection } from "@superdurable/connector-google-gmail";
 import slackManifest from "@superdurable/connector-slack/dex-connector.json" with { type: "json" };
@@ -243,6 +244,14 @@ export const signupConnectorToolPolicies: Readonly<Record<string, ToolPolicy>> =
 );
 
 /**
+ * The call of a connector write that a tool makes itself in its Step, such as send_welcome_email's outcome reply. Like
+ * the session's connector tools ({@link signupConnectorToolPolicies}), it sends at most once: without the override,
+ * Slack 0.7.0's fence would allow up to 3 sends of it across Step attempts.
+ */
+export const singleSendCall = (context: AsyncContext, connection: ConnectionRef, operation: OperationRef): Call =>
+  createCall(context, connection, operation, { maxSendsOverride: 1 });
+
+/**
  * The tools that post to Slack or send the email, as Dex connector tools: each call is one connector call in its own
  * tool Step under the connector's call identity and dispatch fence, so a crash never posts or sends twice.
  * approve_account and reject_account are Slack thread replies: the ReviewAPI decision runs first in the same Step, and
@@ -391,7 +400,7 @@ export function createSignupConnectorTools(services: SignupServices): ToolSource
       return { thread, draft, account };
     });
     // The outcome is a second connector call in this Step, under its own call identity and fence.
-    const post = (input: ThreadReplyInput) => runMutation(threadReply, createCall(call.context, slack.reference, threadReply.definition().operation), input);
+    const post = (input: ThreadReplyInput) => runMutation(threadReply, singleSendCall(call.context, slack.reference, threadReply.definition().operation), input);
     const failed = (detail: string) => `Sending the welcome email failed: ${oneLine(detail, "unknown error")}. Check Sent Mail; if nothing went out, send it manually.`;
     let attempt: Awaited<ReturnType<typeof sendMessage.invoke>>;
     try {

@@ -91,18 +91,19 @@ def compiler_environment() -> dict[str, str]:
     return environment
 
 
-BindingKey = tuple[object, object, object, object, object]
+BindingKey = tuple[object, object, object, object, object, object]
 
 
 def trigger_bindings_of(manifest: dict) -> list[BindingKey]:
-    """The Connector Trigger bindings dex-app.yaml declares: connection, Trigger, binding, package and version."""
+    """The Connector Trigger bindings dex-app.yaml declares: Connector, connection, Trigger, binding, package and
+    version."""
     keys = []
     for connector in manifest.get("connectors") or []:
         for binding in connector.get("triggerBindings") or []:
             if not isinstance(binding, dict):
                 raise SystemExit("dex-app.yaml triggerBindings must be objects")
-            keys.append((connector.get("connectionName"), binding.get("triggerName"), binding.get("bindingName"),
-                         connector["package"], connector["version"]))
+            keys.append((connector.get("connectorId"), connector.get("connectionName"), binding.get("triggerName"),
+                         binding.get("bindingName"), connector["package"], connector["version"]))
     return sorted(keys, key=repr)
 
 
@@ -111,13 +112,15 @@ def check_trigger_bindings(source_path: str, graph: dict, expected: list[Binding
     same Connector package version in v2.connectorTriggerBindings."""
     v2 = graph.get("v2") if isinstance(graph.get("v2"), dict) else {}
     bindings = v2.get("connectorTriggerBindings") if isinstance(v2.get("connectorTriggerBindings"), list) else []
-    actual = sorted(((b.get("connectionName"), b.get("triggerName"), b.get("bindingName"),
-                      (b.get("package") or {}).get("name"), (b.get("package") or {}).get("version"))
-                     for b in bindings if isinstance(b, dict) and isinstance(b.get("package") or {}, dict)), key=repr)
-    if len(actual) != len(bindings) or actual != expected:
+    # Only an enabled binding of an npm package is one Setup configures for a TypeScript connector.
+    usable = [b for b in bindings if isinstance(b, dict) and isinstance(b.get("package"), dict)
+              and b.get("configurationEnabled") is True and b["package"].get("ecosystem") == "npm"]
+    actual = sorted(((b.get("connectorId"), b.get("connectionName"), b.get("triggerName"), b.get("bindingName"),
+                      b["package"].get("name"), b["package"].get("version")) for b in usable), key=repr)
+    if len(usable) != len(bindings) or actual != expected:
         raise SystemExit(f"{source_path} declares the Trigger bindings {actual}, but dex-app.yaml declares {expected} "
-                         f"(connection, Trigger, binding, package, version); update {SESSION_TRIGGER_BINDINGS} "
-                         "and write the graph again")
+                         f"(Connector, connection, Trigger, binding, package, version; each enabled, from npm); "
+                         f"update {SESSION_TRIGGER_BINDINGS} and write the graph again")
 
 
 def committed(source_path: str, expected_bindings: list[BindingKey]) -> dict[str, object]:
