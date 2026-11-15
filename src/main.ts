@@ -7,6 +7,7 @@
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Client, Registry, Worker, openBlobCache, type BlobCache } from "@superdurable/dex";
 
@@ -42,7 +43,13 @@ async function runLocal(application: Application): Promise<void> {
   const cache = blobCache("local");
   const client = new Client(registry, cache, options);
   application.connect(client);
-  const worker = new Worker(registry, cache, { ...options, pull: { maxConcurrentTasks: application.config.workerSlots } });
+  // Locally nothing else publishes the Flow definitions, so the Worker uploads the session graph of its harness for
+  // Dex Web's Design view; it skips the graph of the other harness, whose Flow type it does not register.
+  const worker = new Worker(registry, cache, {
+    ...options,
+    pull: { maxConcurrentTasks: application.config.workerSlots },
+    flowDefinitionPaths: [fileURLToPath(new URL("../flow-definitions", import.meta.url))],
+  });
   await worker.start();
   await worker.waitPullRegistered({ timeoutMs: 30_000 });
   const running = application.start(client);
