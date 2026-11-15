@@ -25,7 +25,14 @@ function harness(threads: Record<string, string>) {
   const records: { message: string; attributes: TriggerLogAttributes }[] = [];
   const lookups: string[] = [];
   const sendUserMessage = () => ({ output: true });
-  const client = { invokeRPC: async (_method: unknown, flowId: string, input: unknown) => void invoked.push({ flowId, input }) } as unknown as Client;
+  // Connector SDK 0.11 delivers a Trigger event with a request ID derived from the event ID.
+  const client = {
+    invokeRPC: async (_method: unknown, flowId: string, input: unknown) => void invoked.push({ flowId, input }),
+    invokeRPCWithOptions: async (_method: unknown, flowId: string, input: unknown, options: { requestId?: string }) => {
+      assert.ok(options.requestId);
+      invoked.push({ flowId, input });
+    },
+  } as unknown as Client;
   const sessions = {
     accountOfThread: async (threadTs: string) => {
       lookups.push(threadTs);

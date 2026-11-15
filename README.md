@@ -168,9 +168,11 @@ in the application's process, start it and feed it:
     turn's call record), never from the free text of a turn note, which an applicant can influence (a profile
     URL or page in an earlier call's outcome) and which could otherwise point the tools and the index at another
     review's thread.
-  - Duplicates: Slack can send an event twice, and the inbox can deliver one again after a crash. Dex does not
-    deduplicate RPCs (`Client.invokeRPC` has no request ID in `@superdurable/dex` 1.45.4), so the prompt's rule
-    that a repeated `[slack <ts>]` is ignored is the guard.
+  - Duplicates: Slack can send an event twice, and the inbox can deliver one again after a crash. Since
+    `@superdurable/connectors-sdk` 0.11 the reply target sends each event with a request ID derived from its
+    event ID (`Client.invokeRPCWithOptions`, `@superdurable/dex` 1.45.4), and Dex applies an RPC with a known
+    request ID at most once. A copy under another event ID still reaches the session, so the prompt's rule
+    that a repeated `[slack <ts>]` is ignored stays the last guard.
   - Locally the runner uses Slack Socket Mode with the connection's app-level token, and the inbox lives in
     `trigger-inboxes/` beside `connections.json`. Hosted, the shared connection has no app token, so the runner
     receives the events the platform relays, verifies each `Dex-Relay-Signature`, and keeps the inbox in the
@@ -342,8 +344,9 @@ redirects to private addresses, and for linear-time parsing of adversarial HTML.
   delivered or explicitly dropped.
 - The connector drops every message with a subtype, so a reply sent with **Also send to channel**, a reply
   with a file, and an edit are not delivered.
-- Dex does not deduplicate RPCs, so a repeated event can reach the session twice; the agent ignores a
-  `[slack <ts>]` it already saw, by the prompt alone.
+- Dex deduplicates a repeated delivery of one event by its request ID, but the same Slack message under
+  another event ID can reach the session twice; the agent ignores a `[slack <ts>]` it already saw, by the
+  prompt alone.
 - A first turn that fails after Dex's own Step retries (such as a model outage) leaves a session that never
   posted its review: nothing retries it, and it shows in Dex Web as waiting. Cancel it there; the watcher does
   not start a used session ID again. A later turn that fails leaves the session waiting for the next reply,
