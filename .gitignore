@@ -8,6 +8,10 @@ connections.json
 # Node
 node_modules/
 dist/
+*.log
+
+# make bootstrap's lock and stamp
+/.local/
 
 # Dex local state
 .dex-cache/

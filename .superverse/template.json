@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "buildProfile": "node-ts-v1",
+  "kind": "agent",
+  "stack": "pi",
+  "openapiSpec": "openapi/openapi.yaml",
+  "agentInstructions": "AGENTS.md",
+  "commands": {
+    "bootstrap": "make bootstrap",
+    "checkStatic": "make check-static",
+    "testApplication": "make test-app"
+  }
+}

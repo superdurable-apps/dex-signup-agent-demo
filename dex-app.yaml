@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "superverse.dev/dex-app/v1",
+  "application": {
+    "port": 8080,
+    "healthPath": "/api/health",
+    "workerSlots": 16,
+    "environment": [
+      {
+        "name": "REVIEW_API_URL",
+        "required": true,
+        "minLength": 1
+      },
+      {
+        "name": "REVIEW_API_KEY",
+        "required": true,
+        "secret": true,
+        "minLength": 1
+      },
+      {
+        "name": "ANTHROPIC_API_KEY",
+        "required": true,
+        "secret": true,
+        "minLength": 1
+      },
+      {
+        "name": "SIGNUP_REVIEW_SINCE",
+        "required": true,
+        "minLength": 20
+      },
+      {
+        "name": "SIGNUP_AGENT_HARNESS",
+        "enum": ["pi"]
+      },
+      {
+        "name": "SIGNUP_AGENT_PI_MODEL"
+      },
+      {
+        "name": "SIGNUP_WATCH_INTERVAL_SECONDS"
+      },
+      {
+        "name": "GITHUB_TOKEN",
+        "secret": true
+      }
+    ]
+  },
+  "flowDefinitions": [
+    {
+      "sourcePath": "flow-definitions/signup-review-pi-agent.json"
+    }
+  ],
+  "connectors": [
+    {
+      "connectionName": "review-slack",
+      "connectorId": "slack",
+      "package": "@superdurable/connector-slack",
+      "version": "0.6.0",
+      "authMethodId": "",
+      "operations": ["postChannelMessage", "postThreadReply"],
+      "triggerBindings": [
+        {"triggerName": "threadReplyCreated", "bindingName": "signup-review-reply"}
+      ]
+    },
+    {
+      "connectionName": "welcome-gmail",
+      "connectorId": "gmail",
+      "package": "@superdurable/connector-google-gmail",
+      "version": "0.2.2",
+      "authMethodId": "",
+      "operations": ["sendMessage"]
+    }
+  ]
+}

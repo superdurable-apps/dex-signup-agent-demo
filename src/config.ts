@@ -1,19 +1,17 @@
-// Process configuration from environment variables (`npm start` loads `.env`). Secrets are never logged.
+// Application configuration from environment variables: `.env` locally (`npm start` loads it), the Project
+// configuration's application environment on Superverse. Secrets are never logged.
 
-import { ApiKeyCredential } from "@superdurable/dex";
+import type { ReviewChannel } from "./review-replies.ts";
 
 export interface SignupAgentConfig {
-  /** Dex Client and Worker options: local `dexcli dev` by default, or a remote server with TLS and an API key. */
-  readonly dex: {
-    readonly options: { serverAddress: string; flowServiceTls?: object; credential?: ApiKeyCredential };
-    readonly blobCacheDirectory: string;
-  };
   readonly reviewApiUrl: string;
   readonly reviewApiKey: string;
-  readonly slackChannelId: string;
-  readonly reviewerSlackIds: ReadonlySet<string>;
-  readonly harness: string;
+  /** The review channel and the reviewers: from the environment locally, from the reply binding when hosted. */
+  readonly channel: ReviewChannel;
+  readonly harness: "pi" | "claude-agent-sdk";
   readonly piModel: string;
+  /** The model key pi uses; without it pi-ai reads ANTHROPIC_API_KEY from the process environment. */
+  readonly anthropicApiKey: string | undefined;
   readonly claudeModel: string;
   /** `login` (the Claude Code login on this machine) or `api-key` (ANTHROPIC_API_KEY). */
   readonly claudeAuthentication: string;
@@ -22,9 +20,10 @@ export interface SignupAgentConfig {
   readonly watchIntervalMs: number;
   /** Only sign-ups registered at or after this time are reviewed. */
   readonly reviewSince: Date;
-  readonly threadPollIntervalMs: number;
-  /** The Worker's execution slots: each open review's poller holds one while it polls. */
+  /** The local Worker's execution slots: a running turn or tool call takes one; a review that waits holds none. */
   readonly workerSlots: number;
+  /** The local blob cache; a hosted process uses DEX_BLOB_CACHE_DIR/<mode>. */
+  readonly blobCacheDirectory: string;
 }
 
 /** SIGNUP_REVIEW_SINCE is required, so a first start never reviews the whole backlog of pending sign-ups. */
@@ -43,38 +42,37 @@ function positiveInteger(value: string, name: string, unit = "seconds"): number 
   return Number(value);
 }
 
-export function loadSignupAgentConfig(environment: NodeJS.ProcessEnv = process.env): SignupAgentConfig {
+/**
+ * Reads the configuration. A hosted process passes the review channel and reviewers of its Project's reply binding,
+ * their only source there; locally they come from SLACK_REVIEW_CHANNEL and SIGNUP_REVIEWER_SLACK_IDS.
+ */
+export function loadSignupAgentConfig(environment: NodeJS.ProcessEnv = process.env, hostedChannel?: ReviewChannel): SignupAgentConfig {
   const optional = (name: string): string | undefined => environment[name]?.trim() || undefined;
   const required = (name: string): string => optional(name) ?? (() => { throw new Error(`${name} is required; see .env.example`); })();
-  const apiKey = optional("DEX_API_KEY");
   const harness = optional("SIGNUP_AGENT_HARNESS") ?? "pi";
   if (harness !== "pi" && harness !== "claude-agent-sdk") {
     throw new Error("SIGNUP_AGENT_HARNESS must be pi or claude-agent-sdk");
   }
+  if (hostedChannel !== undefined && harness !== "pi") {
+    throw new Error("SIGNUP_AGENT_HARNESS must be pi on Superverse: the Claude Agent SDK harness runs only locally");
+  }
   return {
-    dex: {
-      options: {
-        serverAddress: optional("DEX_FLOW_SERVICE_ADDRESS") ?? "127.0.0.1:8801",
-        ...(["1", "true"].includes(optional("DEX_TLS") ?? "") ? { flowServiceTls: {} } : {}),
-        ...(apiKey === undefined
-          ? {}
-          : { credential: new ApiKeyCredential({ tokenUrl: required("DEX_TOKEN_URL"), serverId: required("DEX_SERVER_ID"), apiKey }) }),
-      },
-      blobCacheDirectory: optional("DEX_BLOB_CACHE_DIR") ?? ".dex-blob-cache",
-    },
     reviewApiUrl: required("REVIEW_API_URL"),
     reviewSince: reviewSince(required("SIGNUP_REVIEW_SINCE")),
     reviewApiKey: required("REVIEW_API_KEY"),
-    slackChannelId: required("SLACK_REVIEW_CHANNEL"),
-    reviewerSlackIds: new Set(required("SIGNUP_REVIEWER_SLACK_IDS").split(",").map((id) => id.trim()).filter(Boolean)),
+    channel: hostedChannel ?? {
+      channelId: required("SLACK_REVIEW_CHANNEL"),
+      reviewerIds: new Set(required("SIGNUP_REVIEWER_SLACK_IDS").split(",").map((id) => id.trim()).filter(Boolean)),
+    },
     harness,
     piModel: optional("SIGNUP_AGENT_PI_MODEL") ?? "anthropic/claude-opus-5-5",
+    anthropicApiKey: optional("ANTHROPIC_API_KEY"),
     claudeModel: optional("SIGNUP_AGENT_CLAUDE_MODEL") ?? "claude-opus-5-5",
     claudeAuthentication: optional("SIGNUP_AGENT_CLAUDE_AUTH") ?? "login",
     claudeCliPath: optional("SIGNUP_AGENT_CLAUDE_CLI"),
     githubToken: optional("GITHUB_TOKEN"),
     watchIntervalMs: positiveInteger(optional("SIGNUP_WATCH_INTERVAL_SECONDS") ?? "30", "SIGNUP_WATCH_INTERVAL_SECONDS") * 1_000,
-    threadPollIntervalMs: positiveInteger(optional("SIGNUP_THREAD_POLL_SECONDS") ?? "60", "SIGNUP_THREAD_POLL_SECONDS") * 1_000,
     workerSlots: positiveInteger(optional("SIGNUP_WORKER_SLOTS") ?? "64", "SIGNUP_WORKER_SLOTS", "slots"),
+    blobCacheDirectory: optional("DEX_BLOB_CACHE_DIR") ?? ".dex-blob-cache",
   };
 }

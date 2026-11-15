@@ -1,0 +1,47 @@
+openapi: 3.1.0
+info:
+  title: Dex signup review agent
+  version: 1.0.0
+  description: >-
+    An agent reviews each Dex Cloud sign-up with the admins in Slack. The review happens in Slack, so the web process
+    serves only its health and the Slack events the platform relays to the reply Trigger.
+paths:
+  /api/health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: The web process serves.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+  /triggers/slack/cmV2aWV3LXNsYWNr:
+    post:
+      operationId: relayedSlackEvent
+      description: >-
+        The Slack events the platform relays for the review-slack connection (the path is relayedTriggerPath of the
+        Slack connector: /triggers/slack/ and the unpadded base64url connection name). The platform signs each request
+        with Dex-Relay-Signature; the reply Trigger records a matching reply in its durable inbox before it answers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event_id, event]
+              properties:
+                event_id: { type: string }
+                event_time: { type: integer }
+                team_id: { type: string }
+                event: { type: object }
+      responses:
+        "200":
+          description: Every matching binding's inbox recorded the event, or no binding matched it.
+        "400":
+          description: No valid host signature, or an invalid body.
+        "503":
+          description: The runner does not receive relayed events yet, such as while it starts.
