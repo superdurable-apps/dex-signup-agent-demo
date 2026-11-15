@@ -17,10 +17,12 @@ README describes the design and its limits.
 
 The session Flow's graph is committed, not rendered: dex-app.yaml declares
 `flow-definitions/signup-review-pi-agent.json`. When the Flow type or permission changes, or after a
-`@superdurable/dex-agents` update, write it again:
-`npx --no-install dex-agents-session-graph --flow-type SignupReviewPiAgentFlow --permission signup-review.operate
---out flow-definitions/signup-review-pi-agent.json`. `make check-fdg-v2` fails while it differs. Never edit it by
-hand, and never rename the Flow type of a session with open reviews.
+`@superdurable/dex-agents` update, or a change to the Slack reply binding or the Slack connector version, write
+both harnesses' graphs again with `make session-graphs`; it passes
+`--trigger-bindings scripts/session-trigger-bindings.json`, so each graph declares the `signup-review-reply` binding
+in `v2.connectorTriggerBindings`, which Superverse Setup requires. `make check-fdg-v2` fails while a graph differs
+from the generator's output or its binding differs from `dex-app.yaml`. Never edit a graph by hand, and never rename
+the Flow type of a session with open reviews.
 
 The base files `src/main.ts`, `src/dex.ts`, `src/runtime.ts`, `src/http.ts` and `apptest/apptest.ts` follow the
 platform contract: `npm run build` writes `dist/`, `node . web` serves `/api/health` and the relayed Slack events on
@@ -37,17 +39,18 @@ platform contract: `npm run build` writes `dist/`, `node . web` serves `/api/hea
   configuration, which the user fills in Studio Setup.
 - Locally, `.env` sets everything, including `SLACK_REVIEW_CHANNEL` and `SIGNUP_REVIEWER_SLACK_IDS`.
 - Only the pi harness runs hosted; the Claude Agent SDK harness runs only locally.
-- The connector entries of `dex-app.yaml` name npm packages with exact versions, the shape of the platform's
-  unmerged PGTSCONN plan; the platform refuses them until it lands, and the shape may change.
+- The connector entries of `dex-app.yaml` name npm packages with the exact versions `package.json` pins (the
+  platform's PGTSCONN shape); `make check-fdg-v2` fails when they differ.
 
 ## Rules
 
 - Keep the agent a harness configuration: prompt, tools and their effects. Add a Flow only for work outside a
   session.
 - `package-lock.json` pins every dependency: change dependencies with `npm install --save-exact`, commit the
-  lockfile, never commit `node_modules` or `dist`. No package script runs in the build. The `overrides` entries keep
-  one `@superdurable/dex` and one `@superdurable/connectors-sdk` for every package. `@superdurable/dex` is pinned to
-  the version the dex-agents packages peer.
+  lockfile, never commit `node_modules` or `dist`. No package script runs in the build. Keep one `@superdurable/dex` and
+  one `@superdurable/connectors-sdk` for every package (`npm ls @superdurable/dex @superdurable/connectors-sdk`):
+  `@superdurable/dex` is pinned to the version the dex-agents packages peer, and `@superdurable/connectors-sdk` to
+  the version the connector packages depend on.
 - Never put a key in source, Flow state, logs or responses.
 
 ## Tests

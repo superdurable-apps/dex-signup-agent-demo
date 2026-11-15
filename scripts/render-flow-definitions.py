@@ -29,6 +29,10 @@ MAXIMUM_COMMITTED_GRAPH_BYTES = 8 * 1024 * 1024
 
 ROOT = Path(__file__).resolve().parents[1]
 SESSION_GRAPH_CLI = ROOT / "node_modules" / ".bin" / "dex-agents-session-graph"
+# The Connector Trigger bindings every session graph declares, with their Setup UI units; outside flow-definitions,
+# whose every file the local Worker uploads as a graph.
+SESSION_TRIGGER_BINDINGS = "scripts/session-trigger-bindings.json"
+GRAPH_DIRECTORY = ROOT / "flow-definitions"
 
 
 def blocking_diagnostics(graph):
@@ -45,18 +49,27 @@ def main() -> None:
         manifest = json.loads((ROOT / "dex-app.yaml").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as failure:
         raise SystemExit("dex-app.yaml must contain valid JSON-compatible YAML") from failure
-    # Adapted from the base, which refuses every connector: a TypeScript connector names its npm package and exact
-    # version, the shape the platform's unmerged PGTSCONN plan proposes. The platform's own validator still refuses
-    # them until that plan lands.
+    # Adapted from the base, which refuses every connector: a TypeScript connector names its npm package and the exact
+    # version package.json pins (the platform's PGTSCONN shape).
+    dependencies = json.loads((ROOT / "package.json").read_text(encoding="utf-8")).get("dependencies") or {}
     for connector in manifest.get("connectors") or []:
         if (not isinstance(connector, dict) or not isinstance(connector.get("package"), str) or not connector["package"]
                 or not isinstance(connector.get("version"), str) or not re.fullmatch(r"\d+\.\d+\.\d+", connector["version"])):
             raise SystemExit("dex-app.yaml connectors must each name an npm package and an exact version")
+        if dependencies.get(connector["package"]) != connector["version"]:
+            raise SystemExit(f"dex-app.yaml pins {connector['package']}@{connector['version']}, "
+                             f"but package.json pins {dependencies.get(connector['package'])}")
+    expected_bindings = trigger_bindings_of(manifest)
     entries = manifest.get("flowDefinitions") or []
     if not entries or any(not isinstance(entry, dict) for entry in entries):
         raise SystemExit("dex-app.yaml must list each Flow source as {\"sourcePath\": ...} in flowDefinitions")
-    definitions = sorted((render(entry.get("sourcePath"), arguments.dexcli) for entry in entries),
+    definitions = sorted((render(entry.get("sourcePath"), arguments.dexcli, expected_bindings) for entry in entries),
                          key=lambda definition: definition["flowType"])
+    # The local Worker uploads every graph of flow-definitions, also those of harnesses the platform does not run.
+    listed = {entry.get("sourcePath") for entry in entries}
+    for path in sorted(GRAPH_DIRECTORY.glob("*.json")):
+        if path.relative_to(ROOT).as_posix() not in listed:
+            committed(path.relative_to(ROOT).as_posix(), expected_bindings)
     flow_types = [definition["flowType"] for definition in definitions]
     if len(set(flow_types)) != len(flow_types):
         raise SystemExit("Flow types must be unique: " + ", ".join(flow_types))
@@ -78,10 +91,43 @@ def compiler_environment() -> dict[str, str]:
     return environment
 
 
-def committed(source_path: str) -> dict[str, object]:
+BindingKey = tuple[object, object, object, object, object, object]
+
+
+def trigger_bindings_of(manifest: dict) -> list[BindingKey]:
+    """The Connector Trigger bindings dex-app.yaml declares: Connector, connection, Trigger, binding, package and
+    version."""
+    keys = []
+    for connector in manifest.get("connectors") or []:
+        for binding in connector.get("triggerBindings") or []:
+            if not isinstance(binding, dict):
+                raise SystemExit("dex-app.yaml triggerBindings must be objects")
+            keys.append((connector.get("connectorId"), connector.get("connectionName"), binding.get("triggerName"),
+                         binding.get("bindingName"), connector["package"], connector["version"]))
+    return sorted(keys, key=repr)
+
+
+def check_trigger_bindings(source_path: str, graph: dict, expected: list[BindingKey]) -> None:
+    """Superverse Setup accepts a triggerBinding of dex-app.yaml only when a graph declares the same binding of the
+    same Connector package version in v2.connectorTriggerBindings."""
+    v2 = graph.get("v2") if isinstance(graph.get("v2"), dict) else {}
+    bindings = v2.get("connectorTriggerBindings") if isinstance(v2.get("connectorTriggerBindings"), list) else []
+    # Only an enabled binding of an npm package is one Setup configures for a TypeScript connector.
+    usable = [b for b in bindings if isinstance(b, dict) and isinstance(b.get("package"), dict)
+              and b.get("configurationEnabled") is True and b["package"].get("ecosystem") == "npm"]
+    actual = sorted(((b.get("connectorId"), b.get("connectionName"), b.get("triggerName"), b.get("bindingName"),
+                      b["package"].get("name"), b["package"].get("version")) for b in usable), key=repr)
+    if len(usable) != len(bindings) or actual != expected:
+        raise SystemExit(f"{source_path} declares the Trigger bindings {actual}, but dex-app.yaml declares {expected} "
+                         f"(Connector, connection, Trigger, binding, package, version; each enabled, from npm); "
+                         f"update {SESSION_TRIGGER_BINDINGS} and write the graph again")
+
+
+def committed(source_path: str, expected_bindings: list[BindingKey]) -> dict[str, object]:
     """A committed FDG 2.0 graph (.json), such as a Dex Agents session graph, which the platform publishes as
-    committed. After make bootstrap it must equal what the installed @superdurable/dex-agents writes for the
-    graph's own Flow type and Action permission, so a dependency update never leaves a stale graph behind."""
+    committed. It must declare the Trigger bindings of dex-app.yaml. After make bootstrap it must equal what the
+    installed @superdurable/dex-agents writes for the graph's own Flow type and Action permission with the bindings
+    of SESSION_TRIGGER_BINDINGS, so a dependency update never leaves a stale graph behind."""
     path = ROOT / source_path
     if path.is_symlink() or path.stat().st_size > MAXIMUM_COMMITTED_GRAPH_BYTES:
         raise SystemExit(f"{source_path} must be a regular file of at most 8 MiB")
@@ -94,6 +140,7 @@ def committed(source_path: str) -> dict[str, object]:
             or graph.get("valid") is not True or not isinstance(graph.get("diagnostics"), list)
             or not all(isinstance(item, dict) for item in graph["diagnostics"]) or blocking_diagnostics(graph)):
         raise SystemExit(f"{source_path} is not a valid strict FDG 2.0 graph without diagnostics")
+    check_trigger_bindings(source_path, graph, expected_bindings)
     if (ROOT / "node_modules").is_dir():
         v2 = graph.get("v2") if isinstance(graph.get("v2"), dict) else {}
         actions = v2.get("actions") if isinstance(v2.get("actions"), list) else []
@@ -102,7 +149,7 @@ def committed(source_path: str) -> dict[str, object]:
             raise SystemExit(f"{source_path} must be a Dex Agents session graph, written by the installed "
                              "@superdurable/dex-agents with one Action permission")
         regenerate = ["npx", "--no-install", "dex-agents-session-graph", "--flow-type", flow["name"],
-                      "--permission", permissions.pop()]
+                      "--permission", permissions.pop(), "--trigger-bindings", SESSION_TRIGGER_BINDINGS]
         written = subprocess.run(regenerate, cwd=ROOT, check=False, capture_output=True, text=True)
         try:
             current = json.loads(written.stdout) if written.returncode == 0 else None
@@ -115,9 +162,9 @@ def committed(source_path: str) -> dict[str, object]:
             "digest": "sha256:" + hashlib.sha256(canonical_json(graph)).hexdigest(), "valid": True, "graph": graph}
 
 
-def render(source_path: object, dexcli: str) -> dict[str, object]:
+def render(source_path: object, dexcli: str, expected_bindings: list[BindingKey]) -> dict[str, object]:
     if isinstance(source_path, str) and source_path.endswith(".json") and (ROOT / source_path).is_file():
-        return committed(source_path)
+        return committed(source_path, expected_bindings)
     if not isinstance(source_path, str) or not source_path.endswith(".ts") or not (ROOT / source_path).is_file():
         raise SystemExit(f"Flow source does not exist or is not a .ts file or a committed .json graph: {source_path}")
     with tempfile.TemporaryDirectory(prefix="fdg-") as temporary:

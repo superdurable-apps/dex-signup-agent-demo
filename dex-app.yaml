@@ -53,7 +53,7 @@
       "connectionName": "review-slack",
       "connectorId": "slack",
       "package": "@superdurable/connector-slack",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "authMethodId": "",
       "operations": ["postChannelMessage", "postThreadReply"],
       "triggerBindings": [
@@ -64,7 +64,7 @@
       "connectionName": "welcome-gmail",
       "connectorId": "gmail",
       "package": "@superdurable/connector-google-gmail",
-      "version": "0.2.2",
+      "version": "0.3.0",
       "authMethodId": "",
       "operations": ["sendMessage"]
     }

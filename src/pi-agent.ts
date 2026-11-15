@@ -7,7 +7,7 @@ import { createBuiltinAgentSessionFlow, functionTool, type ModelClient } from "@
 import { createPiAiModelClient } from "@superdurable/dex-agents-pi";
 
 import type { ReviewSessionFlow } from "./review-state.ts";
-import { createSignupConnectorTools, createSignupTools, runSignupTool, signupAgentPrompt, toolJsonSchema, type SignupServices } from "./signup-agent.ts";
+import { createSignupConnectorTools, createSignupTools, signupConnectorToolPolicies, runSignupTool, signupAgentPrompt, toolJsonSchema, type SignupServices } from "./signup-agent.ts";
 
 export const piHarnessLabel = "pi (Dex built-in agent loop with pi-ai)";
 
@@ -39,6 +39,7 @@ export function createPiSignupAgent(services: SignupServices, model: ModelClient
         }),
       ),
       toolSources: [createSignupConnectorTools(services)],
+      toolPolicies: signupConnectorToolPolicies,
     },
     "SignupReviewPiAgentFlow",
   );

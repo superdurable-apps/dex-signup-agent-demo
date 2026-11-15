@@ -6,7 +6,7 @@ import { ToolExecutionError } from "@superdurable/dex-agents";
 import { createClaudeAgentSessionFlow, currentDeferredToolExecution } from "@superdurable/dex-agents-claude-agent-sdk";
 
 import type { ReviewSessionFlow } from "./review-state.ts";
-import { createSignupConnectorTools, createSignupTools, runSignupTool, signupAgentPrompt, type SignupServices } from "./signup-agent.ts";
+import { createSignupConnectorTools, createSignupTools, runSignupTool, signupConnectorToolPolicies, signupAgentPrompt, type SignupServices } from "./signup-agent.ts";
 
 export const claudeHarnessLabel = "Claude Agent SDK (Claude Code CLI)";
 
@@ -52,7 +52,10 @@ export function createClaudeSignupAgent(
           }
         }),
       ),
-      toolPolicies: Object.fromEntries(tools.map((signupTool) => [signupTool.name, { effect: signupTool.effect, requiresApproval: false }])),
+      toolPolicies: {
+        ...Object.fromEntries(tools.map((signupTool) => [signupTool.name, { effect: signupTool.effect, requiresApproval: false }])),
+        ...signupConnectorToolPolicies,
+      },
       toolSources: [createSignupConnectorTools(services)],
     },
     "SignupReviewClaudeAgentFlow",

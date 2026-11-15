@@ -3,12 +3,13 @@
 // ReviewAPI says about the account, and approve_account, reject_account and send_welcome_email post their outcome in
 // the thread.
 
-import { createCall, newMutationBranch, runMutation, type Call, type Mutation, type MutationAttempt } from "@superdurable/connectors-sdk";
+import { createCall, newMutationBranch, runMutation, type Call, type ConnectionRef, type Mutation, type MutationAttempt, type OperationRef } from "@superdurable/connectors-sdk";
+import type { AsyncContext } from "@superdurable/dex";
 import gmailManifest from "@superdurable/connector-google-gmail/dex-connector.json" with { type: "json" };
 import type { GmailConnection } from "@superdurable/connector-google-gmail";
 import slackManifest from "@superdurable/connector-slack/dex-connector.json" with { type: "json" };
 import type { Connection as SlackConnection } from "@superdurable/connector-slack";
-import { ToolExecutionError, ToolOutcomeUnknownError, type ToolEffect, type ToolSource } from "@superdurable/dex-agents";
+import { ToolExecutionError, ToolOutcomeUnknownError, type ToolEffect, type ToolPolicy, type ToolSource } from "@superdurable/dex-agents";
 import { ConnectorToolSource, connectorTool, type ConnectorPackageManifest } from "@superdurable/dex-agents/connectors";
 import { z } from "zod";
 
@@ -231,6 +232,26 @@ function manifestFor(manifest: ConnectorPackageManifest, operationId: string, de
 }
 
 /**
+ * The session tool policies of the connector tools: each call sends at most once. Slack 0.7.0 and Gmail 0.3.0 declare
+ * a bounded resend (`repeatOnUnknown: limited`, `maxSends` 3), which Dex Agents 0.6.12 turns on; `maxSends: 1` keeps
+ * one attempt, which the tools' refusals after an unknown outcome assume. The effect still comes from the manifest.
+ */
+export const signupConnectorToolPolicies: Readonly<Record<string, ToolPolicy>> = Object.fromEntries(
+  ["post_review", "post_draft", "reply_in_thread", "approve_account", "reject_account", "send_welcome_email"].map((name) => [
+    name,
+    { effect: "non_idempotent_write", requiresApproval: false, maxSends: 1 },
+  ]),
+);
+
+/**
+ * The call of a connector write that a tool makes itself in its Step, such as send_welcome_email's outcome reply. Like
+ * the session's connector tools ({@link signupConnectorToolPolicies}), it sends at most once: without the override,
+ * Slack 0.7.0's fence would allow up to 3 sends of it across Step attempts.
+ */
+export const singleSendCall = (context: AsyncContext, connection: ConnectionRef, operation: OperationRef): Call =>
+  createCall(context, connection, operation, { maxSendsOverride: 1 });
+
+/**
  * The tools that post to Slack or send the email, as Dex connector tools: each call is one connector call in its own
  * tool Step under the connector's call identity and dispatch fence, so a crash never posts or sends twice.
  * approve_account and reject_account are Slack thread replies: the ReviewAPI decision runs first in the same Step, and
@@ -379,7 +400,7 @@ export function createSignupConnectorTools(services: SignupServices): ToolSource
       return { thread, draft, account };
     });
     // The outcome is a second connector call in this Step, under its own call identity and fence.
-    const post = (input: ThreadReplyInput) => runMutation(threadReply, createCall(call.context, slack.reference, threadReply.definition().operation), input);
+    const post = (input: ThreadReplyInput) => runMutation(threadReply, singleSendCall(call.context, slack.reference, threadReply.definition().operation), input);
     const failed = (detail: string) => `Sending the welcome email failed: ${oneLine(detail, "unknown error")}. Check Sent Mail; if nothing went out, send it manually.`;
     let attempt: Awaited<ReturnType<typeof sendMessage.invoke>>;
     try {

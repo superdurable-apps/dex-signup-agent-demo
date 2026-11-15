@@ -19,23 +19,19 @@
     "@earendil-works/pi-agent-core": "1.5.1",
     "@earendil-works/pi-ai": "1.5.1",
     "@earendil-works/pi-schema": "1.5.1",
-    "@superdurable/connector-google-gmail": "0.2.2",
-    "@superdurable/connector-slack": "0.6.0",
-    "@superdurable/connectors-sdk": "0.10.0",
-    "@superdurable/dex": "1.45.3",
-    "@superdurable/dex-agents": "0.6.8",
-    "@superdurable/dex-agents-claude-agent-sdk": "0.6.8",
-    "@superdurable/dex-agents-pi": "0.6.8",
+    "@superdurable/connector-google-gmail": "0.3.0",
+    "@superdurable/connector-slack": "0.7.0",
+    "@superdurable/connectors-sdk": "0.11.0",
+    "@superdurable/dex": "1.45.4",
+    "@superdurable/dex-agents": "0.6.12",
+    "@superdurable/dex-agents-claude-agent-sdk": "0.6.12",
+    "@superdurable/dex-agents-pi": "0.6.12",
     "yaml": "2.9.1",
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "22.20.5",
     "typescript": "5.9.3"
-  },
-  "overrides": {
-    "@superdurable/dex": "$@superdurable/dex",
-    "@superdurable/connectors-sdk": "$@superdurable/connectors-sdk"
   },
   "main": "dist/main.js"
 }
