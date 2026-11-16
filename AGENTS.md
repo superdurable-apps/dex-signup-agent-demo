@@ -46,6 +46,10 @@ platform contract: `npm run build` writes `dist/`, `node . web` serves `/api/hea
 - Only the pi harness runs hosted; the Claude Agent SDK harness runs only locally.
 - The connector entries of `dex-app.yaml` name npm packages with the exact versions `package.json` pins (the
   platform's PGTSCONN shape); `make check-fdg-v2` fails when they differ.
+- `dex-app.yaml` is strict YAML: no anchors, aliases, tags or repeated keys, and quote every value YAML 1.1 and 1.2
+  read differently (a version such as `"0.7.0"`, `yes`/`no`/`on`/`off`, a leading zero, a date, a signed or
+  floating-point number). `make check-fdg-v2` reads it through `tools/appmanifest`, the platform's own decoder (Go);
+  never edit `tools/appmanifest`.
 
 ## Rules
 

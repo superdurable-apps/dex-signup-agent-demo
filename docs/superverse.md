@@ -16,6 +16,12 @@ The repository is a Superverse application of the TypeScript base. Connect it as
 - [`dex-app.yaml`](../dex-app.yaml): the application (port 8080, health path `/api/health`, 16 Worker slots, the
   environment it accepts), the committed Flow graph, and the two connections.
 
+`dex-app.yaml` is one strict YAML document: no repeated key, anchor, alias, merge key or tag, no signed or
+floating-point number and no date, and every plain value that YAML 1.1 and YAML 1.2 read differently is quoted, such
+as a dotted version (`version: "0.7.0"`), `yes`, `no`, `on`, `off` or a leading zero. JSON is accepted too.
+[`tools/appmanifest`](../tools/appmanifest), the platform's own decoder, applies these rules; `make check-fdg-v2`
+reads the manifest through it.
+
 ## Setup
 
 ### Connections
