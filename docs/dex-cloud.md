@@ -1,6 +1,6 @@
-# Run it on Superverse
+# Run it on Dex Cloud
 
-How to deploy and run the review agent on Superverse. For the design, see [design.md](design.md); for all settings
+How to deploy and run the review agent on Dex Cloud. For the design, see [design.md](design.md); for all settings
 and commands, [reference.md](reference.md).
 
 The hosted path is tested only with the connector's local stand-ins and the app tests' Socket Mode stand-in; it has
@@ -8,9 +8,9 @@ not been verified against a live relay.
 
 ## Connect a repository
 
-The repository is a Superverse application of the TypeScript base. Connect it as an application; Superverse reads:
+The repository is a Dex Cloud application of the TypeScript base. Connect it as an application; Dex Cloud reads:
 
-- [`.superverse/template.json`](../.superverse/template.json): build profile `node-ts-v1`, kind `agent`, the agent
+- [`.dex/template.json`](../.dex/template.json): build profile `node-ts-v1`, kind `agent`, the agent
   instructions [`AGENTS.md`](../AGENTS.md), the API [`openapi/openapi.yaml`](../openapi/openapi.yaml), and the
   commands `make bootstrap`, `make check-static` and `make test-app`.
 - [`dex-app.yaml`](../dex-app.yaml): the application (port 8080, health path `/api/health`, 16 Worker slots, the
@@ -90,7 +90,7 @@ The platform itself sets `PORT` (web only), `DEX_FLOW_SERVICE_ADDRESS`, `DEX_TOK
 
 ## Build and processes
 
-Superverse builds the image with `npm ci --ignore-scripts` and `npm run build`, without network, on Node.js 22, and
+Dex Cloud builds the image with `npm ci --ignore-scripts` and `npm run build`, without network, on Node.js 22, and
 runs two processes from it:
 
 - **`node . web`** serves `GET /api/health` (the manifest's `healthPath`) and the relayed Slack events at

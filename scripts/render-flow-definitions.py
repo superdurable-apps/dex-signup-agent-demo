@@ -115,7 +115,7 @@ def trigger_bindings_of(manifest: dict) -> list[BindingKey]:
 
 
 def check_trigger_bindings(source_path: str, graph: dict, expected: list[BindingKey]) -> None:
-    """Superverse Setup accepts a triggerBinding of dex-app.yaml only when a graph declares the same binding of the
+    """Dex Cloud Setup accepts a triggerBinding of dex-app.yaml only when a graph declares the same binding of the
     same Connector package version in v2.connectorTriggerBindings."""
     v2 = graph.get("v2") if isinstance(graph.get("v2"), dict) else {}
     bindings = v2.get("connectorTriggerBindings") if isinstance(v2.get("connectorTriggerBindings"), list) else []

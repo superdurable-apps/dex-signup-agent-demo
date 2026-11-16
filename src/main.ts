@@ -1,4 +1,4 @@
-// The entry of package.json's main. On Superverse, `node . web` serves GET /api/health and the Slack events the
+// The entry of package.json's main. On Dex Cloud, `node . web` serves GET /api/health and the Slack events the
 // platform relays to the reply Trigger on PORT, and `node . worker` runs the Dex Worker and the SignupWatcher with its
 // readiness on the runtime's address. Locally, `node .` (npm start) runs all of it in one process, with the reply
 // Trigger on Slack Socket Mode. Node.js runs as PID 1 on Live, which ignores SIGTERM without a handler, so each mode

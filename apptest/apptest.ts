@@ -1,4 +1,4 @@
-// The API test harness of make test-app, from the Superverse node-ts base: every
+// The API test harness of make test-app, from the Dex Cloud node-ts base: every
 // apptest runs the application's Flows on a pull Worker of a real Dex engine
 // that exists only for that test, with the application's background work, and
 // serves the real HTTP API in front of it. Never replace Dex; a test that

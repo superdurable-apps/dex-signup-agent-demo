@@ -61,7 +61,7 @@ A review goes like this:
    This needs server-zd 0.1.34 or newer and every Worker on `@superdurable/dex-agents` 0.6.14
    ([docs/design.md](docs/design.md#ending-a-review)).
 
-Locally, one process runs the Dex Worker, the watcher and the Trigger. On Superverse, `node . worker` runs the Worker
+Locally, one process runs the Dex Worker, the watcher and the Trigger. On Dex Cloud, `node . worker` runs the Worker
 and the watcher, and `node . web` runs the Trigger.
 
 [docs/design.md](docs/design.md) covers the tools, the send and resend policy, de-duplication, reply routing and the
@@ -119,9 +119,9 @@ let them finish.
 **Tests:** `npm test` runs the scenario suite of both harnesses, and `make test-app` runs the app tests. Neither
 calls a real model, Slack, Gmail or GitHub. See [docs/reference.md](docs/reference.md#tests).
 
-## Run it on Superverse
+## Run it on Dex Cloud
 
-See [docs/superverse.md](docs/superverse.md). It covers connecting the repository, the connections and the reply
+See [docs/dex-cloud.md](docs/dex-cloud.md). It covers connecting the repository, the connections and the reply
 Trigger binding in Setup, the secrets and model settings, the build and processes, Preview and Live, regenerating
 the session graph, and the hosted constraints.
 

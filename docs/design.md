@@ -229,7 +229,7 @@ How a thread finds its session:
 
 Locally the runner uses Slack Socket Mode with the connection's app-level token, and the inbox lives in
 `trigger-inboxes/` beside `connections.json`. Hosted, the runner receives the events the platform relays, verifies
-each `Dex-Relay-Signature`, and keeps the inbox in the Project's storage (see [superverse.md](superverse.md)).
+each `Dex-Relay-Signature`, and keeps the inbox in the Project's storage (see [dex-cloud.md](dex-cloud.md)).
 
 Where they run ([`src/main.ts`](../src/main.ts), [`src/application.ts`](../src/application.ts)): locally,
 `npm start` runs one process with the Dex Worker, the watcher and the reply Trigger. Hosted, `node . worker` runs the
@@ -296,7 +296,7 @@ Claude Code login (<code>SIGNUP_AGENT_CLAUDE_AUTH=login</code>), or <code>ANTHRO
 </table>
 
 Each harness has its own session Flow type, and the Worker runs one of them: finish the open reviews before
-switching, or switch back to let them finish. Only the pi harness runs on Superverse.
+switching, or switch back to let them finish. Only the pi harness runs on Dex Cloud.
 
 ## Ending a review
 
@@ -362,4 +362,4 @@ upgrade. The watcher, the reply Trigger and the HTTP API never stop a session.
 - `fetch_profile` refuses to run with `NODE_USE_ENV_PROXY` set, and connects through its own HTTPS agent, so no
   proxy resolves a host past the address check.
 
-Hosted limits are in [superverse.md](superverse.md#constraints).
+Hosted limits are in [dex-cloud.md](dex-cloud.md#constraints).

@@ -1,5 +1,5 @@
 // Application configuration from environment variables: `.env` locally (`npm start` loads it), the Project
-// configuration's application environment on Superverse. Secrets are never logged.
+// configuration's application environment on Dex Cloud. Secrets are never logged.
 
 import { getBuiltinModels, getBuiltinProviders, type BuiltinProvider } from "@earendil-works/pi-ai/providers/all";
 
@@ -178,7 +178,7 @@ export function loadSignupAgentConfig(environment: NodeJS.ProcessEnv = process.e
     throw new Error("SIGNUP_AGENT_HARNESS must be pi or claude-agent-sdk");
   }
   if (hostedChannel !== undefined && harness !== "pi") {
-    throw new Error("SIGNUP_AGENT_HARNESS must be pi on Superverse: the Claude Agent SDK harness runs only locally");
+    throw new Error("SIGNUP_AGENT_HARNESS must be pi on Dex Cloud: the Claude Agent SDK harness runs only locally");
   }
   return {
     reviewApiUrl: required("REVIEW_API_URL"),

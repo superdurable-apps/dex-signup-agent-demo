@@ -1,4 +1,4 @@
-// The run mode and the platform's runtime.yaml, as the Superverse node-ts base reads them. `node . web` and
+// The run mode and the platform's runtime.yaml, as the Dex Cloud node-ts base reads them. `node . web` and
 // `node . worker` are the two hosted processes; `node .` without a mode is the local process, which runs both roles.
 
 import { readFileSync } from "node:fs";

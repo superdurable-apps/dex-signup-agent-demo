@@ -1,4 +1,4 @@
-// The web process's HTTP server, from the Superverse node-ts base: GET /api/health, the API routes, the page, and in
+// The web process's HTTP server, from the Dex Cloud node-ts base: GET /api/health, the API routes, the page, and in
 // front of them the Slack events the platform relays to the reply Trigger.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";

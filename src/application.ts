@@ -55,7 +55,7 @@ export interface Application {
   readonly sessionFlow: ReviewSessionFlow;
   readonly services: SignupServices;
   readonly config: SignupAgentConfig;
-  /** Whether the process runs on Superverse, selected by the platform's DEX_PROJECT_CONFIG_KEY. */
+  /** Whether the process runs on Dex Cloud, selected by the platform's DEX_PROJECT_CONFIG_KEY. */
   readonly isHosted: boolean;
   /** The API of openapi/openapi.yaml beyond GET /api/health; the review happens in Slack, so there is none. */
   routes(client: Client): Route[];

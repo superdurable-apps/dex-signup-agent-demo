@@ -1,15 +1,15 @@
-# The Superverse application manifest, strict YAML: no anchors, aliases, tags or
+# The application manifest, strict YAML: no anchors, aliases, tags or
 # repeated keys. Quote every value that YAML 1.1 and 1.2 read differently, such
 # as a dotted version ("0.7.0"), yes/no/on/off or a leading zero.
 # tools/appmanifest is the platform's decoder: it prints this file as the JSON
 # that make check-fdg-v2 checks.
-schemaVersion: superverse.dev/dex-app/v1
+schemaVersion: dex.superdurable.io/dex-app/v1
 application:
   port: 8080
   healthPath: /api/health
   # Hosted Worker slots (1 to 64); a review that waits for a reply holds none.
   workerSlots: 16
-  # Set in Setup; docs/superverse.md and docs/reference.md describe each one.
+  # Set in Setup; docs/dex-cloud.md and docs/reference.md describe each one.
   environment:
     - name: REVIEW_API_URL
       required: true
