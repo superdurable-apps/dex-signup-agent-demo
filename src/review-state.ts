@@ -208,11 +208,14 @@ export class ReviewSessions {
   }
 
   /**
-   * Ends the review: cancels its session, which never ends on its own. finish_review calls it as its last act, so
-   * cancelling the session's own running tool Step loses nothing.
+   * Ends the review: asks its session, which never ends on its own, to complete gracefully. The running turn
+   * finishes first, with its tool results and last assistant message stored, and the session Flow then completes at
+   * its next wait for a user message. A reply already queued still runs its turn first. finish_review calls it from
+   * inside its turn; a repeated request is harmless. It needs server-zd 0.1.34 or newer (an older server rejects it)
+   * and every Worker of the session Flow type on dex-agents 0.6.14 or newer.
    */
-  public async endSession(accountId: string, reason: string): Promise<void> {
-    await this.dex.client.stopFlow(reviewSessionId(accountId), { type: StopType.CANCEL, reason }).catch((error: unknown) => {
+  public async endSession(accountId: string): Promise<void> {
+    await this.dex.client.stopFlow(reviewSessionId(accountId), { type: StopType.GRACEFUL_COMPLETE }).catch((error: unknown) => {
       if (!isMissing(error)) {
         throw error;
       }

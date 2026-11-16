@@ -57,7 +57,9 @@ A review goes like this:
 2. The agent researches the applicant, calls post_review and waits. Waiting holds no process.
 3. A reviewer's reply wakes the session for one turn. The agent approves, rejects, posts a new draft or sends the
    email.
-4. After the send or the rejection, finish_review ends the session.
+4. After the send or the rejection, finish_review ends the session: it closes as `COMPLETED` once that turn ends.
+   This needs server-zd 0.1.34 or newer and every Worker on `@superdurable/dex-agents` 0.6.14
+   ([docs/design.md](docs/design.md#ending-a-review)).
 
 Locally, one process runs the Dex Worker, the watcher and the Trigger. On Superverse, `node . worker` runs the Worker
 and the watcher, and `node . web` runs the Trigger.

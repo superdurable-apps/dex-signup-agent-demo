@@ -14,7 +14,7 @@ import { test } from "node:test";
 
 import { Client, Registry, Worker, openBlobCache, type FlowState, type FlowStatus } from "@superdurable/dex";
 
-import { loadApplication, type ApplicationOptions } from "../src/application.ts";
+import { loadApplication, type Application, type ApplicationOptions } from "../src/application.ts";
 import { createHttpServer } from "../src/http.ts";
 
 /** How long a test waits for its engine, and at most for any condition. */
@@ -27,6 +27,8 @@ export interface AppEnv {
   request(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }>;
   /** For what Studio does, such as a Display read or a Stop; never use it to bypass the API. */
   readonly dex: Client;
+  /** The loaded application, connected to `dex`; for reads Studio makes too, such as a session's snapshot. */
+  readonly application: Application;
   /** Polls condition every 100 ms until it holds; fails after timeoutMs (at most 30 s). Never sleep. */
   eventually(timeoutMs: number, condition: () => Promise<boolean>): Promise<void>;
 }
@@ -98,6 +100,7 @@ async function start(cleanups: Cleanup[], name: string, options: Omit<Applicatio
   const base = `http://127.0.0.1:${typeof address === "object" && address !== null ? address.port : 0}`;
   return {
     dex: client,
+    application,
     async request(method, path, body) {
       const response = await fetch(base + path, {
         method,

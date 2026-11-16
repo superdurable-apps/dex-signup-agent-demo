@@ -60,6 +60,9 @@ platform contract: `npm run build` writes `dist/`, `node . web` serves `/api/hea
   one `@superdurable/connectors-sdk` for every package (`npm ls @superdurable/dex @superdurable/connectors-sdk`):
   `@superdurable/dex` is pinned to the version the dex-agents packages peer, and `@superdurable/connectors-sdk` to
   the version the connector packages depend on.
+- finish_review ends a session with `StopType.GRACEFUL_COMPLETE`, so it closes `COMPLETED`: keep server-zd at 0.1.34
+  or newer and every Worker of the session Flow type on `@superdurable/dex-agents` 0.6.14 or newer. Keep a stop of
+  an idle session (a person in Dex Web) a cancel; see docs/design.md, Ending a review.
 - Never put a key in source, Flow state, logs or responses.
 
 ## Tests
