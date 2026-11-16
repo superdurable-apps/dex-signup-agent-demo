@@ -35,6 +35,6 @@ test-app: restored
 		exec superverse-previewctl apptest run -- node $(TEST_FLAGS) $(TESTS); \
 	fi; \
 	node $(TEST_FLAGS) $(TESTS)
-# The scenario suite of both harnesses (README, Tests); it needs dexcli and dex-server-zd on PATH.
+# The scenario suite of both harnesses (docs/reference.md, Tests); it needs dexcli and dex-server-zd on PATH.
 test: restored
 	npm test
