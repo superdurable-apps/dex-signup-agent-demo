@@ -105,8 +105,9 @@ You need Node.js 22.19 or later (24 recommended, see `.nvmrc`) and
    An inconsistent model setting stops the start with a message that says what to set. All variables and the model
    rules are in [docs/reference.md](docs/reference.md#configuration).
 5. **Start the agent:** `npm ci && npm start`. It reviews every pending sign-up registered since
-   `SIGNUP_REVIEW_SINCE`. Stop it with Ctrl+C at any time. The sessions wait in Dex, and replies that arrive in the
-   meantime wait at Slack or in the inbox. Both go on when the agent starts again.
+   `SIGNUP_REVIEW_SINCE`. Stop it with Ctrl+C at any time. The sessions wait in Dex, and replies already delivered
+   to the inbox continue after a restart. If a reply's delivery failed while the agent was down, the admin must
+   post it again.
 6. **Review in Slack:** reply in the review's thread with `approve`, `reject <reason>`, or what to change in the
    email; after the approval, `send`. Watch each session `signup-review-<accountId>` in Dex Web.
 

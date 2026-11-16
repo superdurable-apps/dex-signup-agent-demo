@@ -53,7 +53,7 @@ a message that says what to set.
     is the endpoint's model ID as it is, slashes included, such as `qwen3.8-flash-next` or `meta-llama/Llama-3`. A
     value that starts with a pi-ai catalog provider, such as `anthropic/…` or `openai/…`, is refused as ambiguous:
     write it with the prefix `openai-compatible/`, as in `openai-compatible/openai/gpt-oss-120b`. The older form
-    `openai-compatible/<model ID>` keeps working for any ID. Thinking the endpoint streams as `reasoning_content` is
+    `openai-compatible/<model ID>` keeps working for any ID. Thinking content streamed as `reasoning_content` is
     not sent back in later requests.
   - `anthropic`: the base URL is the part before `/v1/messages` (such as `https://llm.example.com/anthropic`). The
     model is the endpoint's model ID as it is, whatever it starts with; the `openai-compatible/` prefix is refused.
