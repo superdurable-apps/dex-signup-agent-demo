@@ -32,13 +32,13 @@ test("another catalog model needs no ANTHROPIC_API_KEY: pi-ai reads its provider
   assert.deepEqual(configOf({ SIGNUP_AGENT_PI_MODEL: "openai/gpt-5" }).piModel, { kind: "catalog", name: "openai/gpt-5", apiKey: undefined });
 });
 
-test("openai-compatible/<model ID> selects the endpoint and its key, and needs no ANTHROPIC_API_KEY", () => {
+test("the legacy openai-compatible/<model ID> with a base URL selects the endpoint and its key, and needs no ANTHROPIC_API_KEY", () => {
   const environment = { SIGNUP_AGENT_PI_MODEL: "openai-compatible/qwen3.8-flash-next", SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1", SIGNUP_AGENT_PI_API_KEY: "sk-qwen" };
   assert.deepEqual(configOf(environment).piModel, { kind: "openai-compatible", modelId: "qwen3.8-flash-next", baseUrl: "https://llm.example.com/v1", apiKey: "sk-qwen" });
   // A model ID may itself contain a slash.
   assert.deepEqual(configOf({ ...environment, SIGNUP_AGENT_PI_MODEL: "openai-compatible/Qwen/Qwen3-8B" }).piModel, { kind: "openai-compatible", modelId: "Qwen/Qwen3-8B", baseUrl: "https://llm.example.com/v1", apiKey: "sk-qwen" });
   assert.throws(() => configOf({ ...environment, SIGNUP_AGENT_PI_API_KEY: "" }), /SIGNUP_AGENT_PI_API_KEY is required/);
-  assert.throws(() => configOf({ ...environment, SIGNUP_AGENT_PI_BASE_URL: "" }), /SIGNUP_AGENT_PI_BASE_URL is required/);
+  assert.throws(() => configOf({ ...environment, SIGNUP_AGENT_PI_BASE_URL: "" }), /needs SIGNUP_AGENT_PI_BASE_URL/);
 });
 
 test("SIGNUP_AGENT_PI_BASE_URL must be an http(s) base URL with a host, without a query, a fragment or /chat/completions", () => {
@@ -64,10 +64,49 @@ test("SIGNUP_AGENT_PI_BASE_URL must be an http(s) base URL with a host, without 
   }
 });
 
-test("a base URL without the openai-compatible model, or a model without a provider, is refused", () => {
-  assert.throws(() => configOf({ ANTHROPIC_API_KEY: "sk-ant", SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1" }), /SIGNUP_AGENT_PI_BASE_URL is set/);
-  assert.throws(() => configOf({ SIGNUP_AGENT_PI_MODEL: "qwen3.8-flash-next" }), /must be <provider>\/<model ID>/);
-  assert.throws(() => configOf({ SIGNUP_AGENT_PI_MODEL: "openai-compatible/" }), /must be <provider>\/<model ID>/);
+test("with SIGNUP_AGENT_PI_BASE_URL, SIGNUP_AGENT_PI_MODEL is the endpoint's model ID as it is", () => {
+  const endpoint = { SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1", SIGNUP_AGENT_PI_API_KEY: "sk-qwen" };
+  const modelIdOf = (model: string) => configOf({ ...endpoint, SIGNUP_AGENT_PI_MODEL: model }).piModel;
+  for (const [model, modelId] of [
+    ["qwen3.8-flash-next", "qwen3.8-flash-next"],
+    ["  qwen3.8-flash-next ", "qwen3.8-flash-next"],
+    // Slashes stay part of the ID when the prefix is no pi-ai catalog provider.
+    ["meta-llama/Llama-3", "meta-llama/Llama-3"],
+    ["qwen/qwen3", "qwen/qwen3"],
+    // The legacy prefix, as the Live settings have it.
+    ["openai-compatible/qwen3.8-flash-next", "qwen3.8-flash-next"],
+    // The legacy prefix is the way to write an endpoint model ID that starts with a catalog provider.
+    ["openai-compatible/openai/gpt-oss-120b", "openai/gpt-oss-120b"],
+  ]) {
+    assert.deepEqual(modelIdOf(model!), { kind: "openai-compatible", modelId, baseUrl: "https://llm.example.com/v1", apiKey: "sk-qwen" }, model);
+  }
+  // An ANTHROPIC_API_KEY in the environment does not matter here.
+  assert.equal(configOf({ ...endpoint, SIGNUP_AGENT_PI_MODEL: "qwen3.8-flash-next", ANTHROPIC_API_KEY: "sk-ant" }).piModel?.kind, "openai-compatible");
+});
+
+test("inconsistent pi model settings are refused at startup with what to set", () => {
+  const endpoint = { SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1", SIGNUP_AGENT_PI_API_KEY: "sk-qwen" };
+  const refusals: [Record<string, string>, RegExp][] = [
+    // A base URL with a catalog model.
+    [{ ...endpoint, SIGNUP_AGENT_PI_MODEL: "anthropic/claude-opus-5-5", ANTHROPIC_API_KEY: "sk-ant" }, /names the pi-ai catalog provider anthropic, but SIGNUP_AGENT_PI_BASE_URL is set: unset SIGNUP_AGENT_PI_BASE_URL .* or write the endpoint's model ID as openai-compatible\/anthropic\/claude-opus-5-5/],
+    [{ ...endpoint, SIGNUP_AGENT_PI_MODEL: "openai/gpt-oss-120b" }, /names the pi-ai catalog provider openai/],
+    // A base URL without a model, or with an empty one.
+    [{ ...endpoint }, /SIGNUP_AGENT_PI_MODEL is required with SIGNUP_AGENT_PI_BASE_URL/],
+    [{ ...endpoint, SIGNUP_AGENT_PI_MODEL: "  " }, /SIGNUP_AGENT_PI_MODEL is required with SIGNUP_AGENT_PI_BASE_URL/],
+    [{ ...endpoint, SIGNUP_AGENT_PI_MODEL: "openai-compatible/" }, /SIGNUP_AGENT_PI_MODEL has no model ID/],
+    // The legacy prefix without a base URL.
+    [{ SIGNUP_AGENT_PI_MODEL: "openai-compatible/qwen3.8-flash-next", SIGNUP_AGENT_PI_API_KEY: "sk-qwen" }, /openai-compatible\/qwen3.8-flash-next needs SIGNUP_AGENT_PI_BASE_URL/],
+    // No base URL and no catalog provider, as when the owner typed just "openai".
+    [{ SIGNUP_AGENT_PI_MODEL: "openai" }, /SIGNUP_AGENT_PI_MODEL openai is not <provider>\/<model ID> of pi-ai's catalog.*set SIGNUP_AGENT_PI_BASE_URL/],
+    [{ SIGNUP_AGENT_PI_MODEL: "qwen3.8-flash-next" }, /set SIGNUP_AGENT_PI_BASE_URL/],
+    [{ SIGNUP_AGENT_PI_MODEL: "meta-llama/Llama-3" }, /set SIGNUP_AGENT_PI_BASE_URL/],
+    // A catalog provider with a model its catalog lacks.
+    [{ SIGNUP_AGENT_PI_MODEL: "anthropic/no-such-model", ANTHROPIC_API_KEY: "sk-ant" }, /pi-ai's catalog has no model no-such-model of anthropic/],
+    [{ SIGNUP_AGENT_PI_MODEL: "anthropic/", ANTHROPIC_API_KEY: "sk-ant" }, /pi-ai's catalog has no model/],
+  ];
+  for (const [environment, error] of refusals) {
+    assert.throws(() => configOf(environment), error, JSON.stringify(environment));
+  }
 });
 
 test("the Claude Agent SDK harness has no pi model and requires no model key", () => {
@@ -106,7 +145,9 @@ async function streamingEndpoint(respond: (body: string, requestNumber: number) 
       }
       response.writeHead(200, { "content-type": "text/event-stream" });
       for (const chunk of chunks) {
-        response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        // Anthropic events name themselves in an `event:` line; Chat Completions chunks have none.
+        const event = (chunk as { type?: unknown }).type;
+        response.write(`${typeof event === "string" ? `event: ${event}\n` : ""}data: ${JSON.stringify(chunk)}\n\n`);
       }
       response.end("data: [DONE]\n\n");
     });
@@ -225,3 +266,103 @@ test("the OpenAI-compatible model leaves earlier thinking out of the request tha
     await control.close();
   }
 });
+
+test("SIGNUP_AGENT_PI_PROTOCOL picks the custom endpoint's API, openai by default", () => {
+  const endpoint = { SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1", SIGNUP_AGENT_PI_API_KEY: "sk-custom", SIGNUP_AGENT_PI_MODEL: "qwen3.8-flash-next" };
+  const openai = { kind: "openai-compatible", modelId: "qwen3.8-flash-next", baseUrl: "https://llm.example.com/v1", apiKey: "sk-custom" };
+  assert.deepEqual(configOf(endpoint).piModel, openai);
+  assert.deepEqual(configOf({ ...endpoint, SIGNUP_AGENT_PI_PROTOCOL: "" }).piModel, openai);
+  assert.deepEqual(configOf({ ...endpoint, SIGNUP_AGENT_PI_PROTOCOL: "openai" }).piModel, openai);
+  const anthropic = { ...endpoint, SIGNUP_AGENT_PI_PROTOCOL: "anthropic", SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/anthropic" };
+  assert.deepEqual(configOf(anthropic).piModel, { kind: "anthropic-compatible", modelId: "qwen3.8-flash-next", baseUrl: "https://llm.example.com/anthropic", apiKey: "sk-custom" });
+  // With the anthropic protocol chosen, a catalog-like prefix is part of the endpoint's model ID.
+  assert.deepEqual(configOf({ ...anthropic, SIGNUP_AGENT_PI_MODEL: "anthropic/claude-sonnet" }).piModel, { kind: "anthropic-compatible", modelId: "anthropic/claude-sonnet", baseUrl: "https://llm.example.com/anthropic", apiKey: "sk-custom" });
+
+  const refusals: [Record<string, string>, RegExp][] = [
+    [{ SIGNUP_AGENT_PI_PROTOCOL: "openai", ANTHROPIC_API_KEY: "sk-ant" }, /SIGNUP_AGENT_PI_PROTOCOL applies only to a custom endpoint: set SIGNUP_AGENT_PI_BASE_URL/],
+    [{ SIGNUP_AGENT_PI_PROTOCOL: "anthropic", ANTHROPIC_API_KEY: "sk-ant" }, /SIGNUP_AGENT_PI_PROTOCOL applies only to a custom endpoint/],
+    [{ ...endpoint, SIGNUP_AGENT_PI_PROTOCOL: "gemini" }, /SIGNUP_AGENT_PI_PROTOCOL must be openai or anthropic/],
+    [{ ...endpoint, SIGNUP_AGENT_PI_PROTOCOL: "Anthropic" }, /SIGNUP_AGENT_PI_PROTOCOL must be openai or anthropic/],
+    [{ ...anthropic, SIGNUP_AGENT_PI_MODEL: "openai-compatible/qwen3.8-flash-next" }, /is the OpenAI-compatible form, but SIGNUP_AGENT_PI_PROTOCOL is anthropic/],
+    [{ ...anthropic, SIGNUP_AGENT_PI_API_KEY: "" }, /SIGNUP_AGENT_PI_API_KEY is required/],
+    [{ ...anthropic, SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/anthropic/v1/messages" }, /must not end in \/messages: with SIGNUP_AGENT_PI_PROTOCOL=anthropic the client appends \/v1\/messages/],
+  ];
+  for (const [environment, error] of refusals) {
+    assert.throws(() => configOf(environment), error, JSON.stringify(environment));
+  }
+});
+
+/** Anthropic Messages stream events: signed thinking, then a tool call whose input arrives in pieces; or a text answer. */
+const anthropicToolCallEvents = [
+  { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude-compatible", content: [], stop_reason: null, usage: { input_tokens: 40, output_tokens: 1 } } },
+  { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } },
+  { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Check the " } },
+  { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "profile first." } },
+  { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig-abc123" } },
+  { type: "content_block_stop", index: 0 },
+  { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_1", name: "lookup_profile", input: {} } },
+  ...['{"account', 'Id":"a-1"', "}"].map((piece) => ({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: piece } })),
+  { type: "content_block_stop", index: 1 },
+  { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 12 } },
+  { type: "message_stop" },
+];
+const anthropicAnswerEvents = [
+  { type: "message_start", message: { id: "msg_2", type: "message", role: "assistant", model: "claude-compatible", content: [], stop_reason: null, usage: { input_tokens: 60, output_tokens: 1 } } },
+  { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+  { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Account a-1 looks fine." } },
+  { type: "content_block_stop", index: 0 },
+  { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 6 } },
+  { type: "message_stop" },
+];
+
+// A plain key, and a key that pi-ai would take for a Claude OAuth token if it were passed as pi-ai's apiKey.
+for (const apiKey of ["sk-custom", "sk-ant-oat01-custom"]) {
+  test(`the Anthropic-compatible model calls <base URL>/v1/messages with the key ${apiKey} as x-api-key, never ANTHROPIC_API_KEY`, async () => {
+    const saved = { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN };
+    process.env.ANTHROPIC_API_KEY = "sk-ant-from-environment";
+    process.env.ANTHROPIC_AUTH_TOKEN = "token-from-environment";
+    const endpoint = await streamingEndpoint((_body, requestNumber) => (requestNumber === 1 ? anthropicToolCallEvents : anthropicAnswerEvents));
+    try {
+      const baseUrl = endpoint.baseUrl.replace(/\/v1$/, "/anthropic");
+      const environment = { SIGNUP_AGENT_PI_BASE_URL: baseUrl, SIGNUP_AGENT_PI_PROTOCOL: "anthropic", SIGNUP_AGENT_PI_MODEL: "claude-compatible", SIGNUP_AGENT_PI_API_KEY: apiKey };
+      const { first, second } = await toolLoop(configuredPiModel(configOf(environment).piModel!));
+      assert.deepEqual(first.toolCalls.map((call) => [call.toolCallId, call.toolName, JSON.parse(call.arguments)]), [["toolu_1", "lookup_profile", { accountId: "a-1" }]]);
+      assert.ok(!(second instanceof Error), String(second));
+      assert.equal(second.text, "Account a-1 looks fine.");
+
+      assert.equal(endpoint.requests.length, 2);
+      for (const request of endpoint.requests) {
+        // pi-ai sends every Anthropic request through the SDK's beta Messages API, which adds ?beta=true.
+        assert.equal(request.url, "/anthropic/v1/messages?beta=true");
+        assert.equal(request.headers["x-api-key"], apiKey);
+        assert.equal(request.headers.authorization, undefined);
+        assert.equal(JSON.stringify(request.headers).includes("from-environment"), false);
+        // No Claude Code identity and no OAuth betas, which pi-ai adds for an OAuth token.
+        assert.equal(request.headers["x-app"], undefined);
+        assert.equal(String(request.headers["user-agent"]).includes("claude-cli"), false);
+        assert.equal(/oauth-|claude-code-/.test(String(request.headers["anthropic-beta"] ?? "")), false);
+        assert.equal(request.body.model, "claude-compatible");
+        assert.equal(request.body.thinking, undefined);
+        assert.equal(JSON.stringify(request.body.tools).includes("eager_input_streaming"), false);
+      }
+      // The second request carries the signed thinking and the tool call back, then the tool result.
+      type Block = { type: string; id?: string; tool_use_id?: string; thinking?: string; signature?: string };
+      const messages = endpoint.requests[1]!.body.messages as { role: string; content: string | Block[] }[];
+      const blocksOf = (role: string) => messages.filter((message) => message.role === role && Array.isArray(message.content)).flatMap((message) => message.content as Block[]);
+      assert.deepEqual(
+        blocksOf("assistant").map((block) => (block.type === "thinking" ? { type: block.type, thinking: block.thinking, signature: block.signature } : { type: block.type, id: block.id })),
+        [
+          { type: "thinking", thinking: "Check the profile first.", signature: "sig-abc123" },
+          { type: "tool_use", id: "toolu_1" },
+        ],
+      );
+      assert.ok(blocksOf("user").some((block) => block.type === "tool_result" && block.tool_use_id === "toolu_1"));
+    } finally {
+      await endpoint.close();
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+}

@@ -6,7 +6,7 @@ import { getBuiltinModels, type BuiltinProvider } from "@earendil-works/pi-ai/pr
 import { createBuiltinAgentSessionFlow, functionTool, type ModelClient } from "@superdurable/dex-agents/builtin-loop";
 import { createPiAiModelClient } from "@superdurable/dex-agents-pi";
 
-import { openAICompatibleProvider, type PiModelSelection } from "./config.ts";
+import { anthropicCompatibleProvider, openAICompatibleProvider, type PiModelSelection } from "./config.ts";
 import type { ReviewSessionFlow } from "./review-state.ts";
 import { createSignupConnectorTools, createSignupTools, signupConnectorToolPolicies, runSignupTool, signupAgentPrompt, toolJsonSchema, type SignupServices } from "./signup-agent.ts";
 
@@ -22,7 +22,7 @@ export function piModel(name: string, apiKey?: string): ModelClient {
   return createPiAiModelClient(model ?? (() => { throw new Error(`pi model ${name} is not in pi-ai's catalog`); })(), apiKey === undefined ? undefined : { apiKey });
 }
 
-/** The context window and the output limit of an OpenAI-compatible model; pi-ai sends max_tokens with every request. */
+/** The context window and the output limit of a custom endpoint's model, of either protocol; pi-ai sends max_tokens with every request. */
 export const openAICompatibleContextWindow = 131_072;
 export const openAICompatibleMaxTokens = 16_384;
 
@@ -65,11 +65,42 @@ export function withoutReplayedThinking(context: Context): Context {
   };
 }
 
+/**
+ * A model of an Anthropic-compatible Messages endpoint outside pi-ai's catalog; pi-ai's Anthropic client posts to
+ * `<baseUrl>/v1/messages`, and {@link configuredPiModel} sends the key as the `x-api-key` header. Its provider is no
+ * catalog provider, so pi-ai reads no key and no Anthropic credentials from the environment. It asks for no thinking. Tools go without `eager_input_streaming` (the
+ * fine-grained streaming beta header instead), since a compatible endpoint may reject unknown tool fields, and no
+ * one-hour cache retention. Any thinking the endpoint returns is replayed with its signature, as the Messages API
+ * expects within a tool loop.
+ */
+export function anthropicCompatibleModel(modelId: string, baseUrl: string): Model<"anthropic-messages"> {
+  return {
+    id: modelId,
+    name: modelId,
+    api: "anthropic-messages",
+    provider: anthropicCompatibleProvider,
+    baseUrl,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: openAICompatibleContextWindow,
+    maxTokens: openAICompatibleMaxTokens,
+    compat: { supportsEagerToolInputStreaming: false, supportsLongCacheRetention: false },
+  };
+}
+
 /** The model client of the configured pi model. */
 export function configuredPiModel(selection: PiModelSelection): ModelClient {
-  return selection.kind === "openai-compatible"
-    ? createPiAiModelClient(openAICompatibleModel(selection.modelId, selection.baseUrl), { apiKey: selection.apiKey, prepareRequest: withoutReplayedThinking })
-    : piModel(selection.name, selection.apiKey);
+  switch (selection.kind) {
+    case "openai-compatible":
+      return createPiAiModelClient(openAICompatibleModel(selection.modelId, selection.baseUrl), { apiKey: selection.apiKey, prepareRequest: withoutReplayedThinking });
+    case "anthropic-compatible":
+      // The key goes as the x-api-key header, not as pi-ai's apiKey: pi-ai treats an apiKey that contains `sk-ant-oat`
+      // as a Claude OAuth token and would send it as a Bearer token with Claude Code identity headers.
+      return createPiAiModelClient(anthropicCompatibleModel(selection.modelId, selection.baseUrl), { headers: { "x-api-key": selection.apiKey } });
+    case "catalog":
+      return piModel(selection.name, selection.apiKey);
+  }
 }
 
 export function createPiSignupAgent(services: SignupServices, model: ModelClient): ReviewSessionFlow {

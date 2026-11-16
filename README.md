@@ -122,8 +122,9 @@ createClaudeAgentSessionFlow(
 <tr><td>Dex's built-in agent loop runs the session; pi-ai makes each model call. Every model call is a
 <code>RunModel</code> Step and every tool call its own tool Step, so Dex Web shows the review call by
 call, and a crash repeats at most the one call that was running. The model is one of pi-ai's catalog,
-such as <code>anthropic/claude-opus-5-5</code>, or any OpenAI-compatible Chat Completions endpoint
-(<code>openai-compatible/&lt;model ID&gt;</code>, see <code>src/pi-agent.ts</code>): its streamed
+such as <code>anthropic/claude-opus-5-5</code>, or any OpenAI-compatible Chat Completions or
+Anthropic-compatible Messages endpoint (<code>SIGNUP_AGENT_PI_BASE_URL</code> with the model ID, and
+<code>SIGNUP_AGENT_PI_PROTOCOL</code>, see <code>src/pi-agent.ts</code>). An OpenAI-compatible endpoint's streamed
 <code>reasoning_content</code> shows as reasoning, and its tool calls run as tool Steps.</td>
 <td>The Claude Code CLI runs each turn segment in one <code>RunModel</code> Step, with the read tools
 inside it. Each write leaves the segment and runs in its own tool Step, one at a time; then the
@@ -234,14 +235,29 @@ You need Node.js 22.19 or later (24 recommended, `.nvmrc`) and
 | `SIGNUP_REVIEWER_SLACK_IDS` | Comma-separated Slack member IDs whose replies count |
 | `DEX_CONNECTOR_CONFIG_FILE` | The connector configuration with `review-slack` and `welcome-gmail` |
 | `SIGNUP_AGENT_HARNESS` | `pi` (default) or `claude-agent-sdk` |
-| `SIGNUP_AGENT_PI_MODEL` | pi: `<provider>/<model ID>` of pi-ai's catalog (`anthropic/claude-opus-5-5`), or `openai-compatible/<model ID>` |
-| `ANTHROPIC_API_KEY` | pi: the key of an `anthropic/…` model, required then. Locally only, another catalog provider's key is read from its own variable, such as `OPENAI_API_KEY`; `dex-app.yaml` declares no such variable, so hosted the model is Anthropic's or `openai-compatible/…` |
-| `SIGNUP_AGENT_PI_BASE_URL`, `SIGNUP_AGENT_PI_API_KEY` | pi with `openai-compatible/<model ID>`, both required then: the endpoint's base URL (the part before `/chat/completions`, such as `https://llm.example.com/v1`, without a query) and its key. Thinking the endpoint streams as `reasoning_content` is not sent back in later requests |
+| `SIGNUP_AGENT_PI_MODEL` | pi: without `SIGNUP_AGENT_PI_BASE_URL`, `<provider>/<model ID>` of pi-ai's catalog (`anthropic/claude-opus-5-5`); with it, the endpoint's model ID, such as `qwen3.8-flash-next` (rules below) |
+| `ANTHROPIC_API_KEY` | pi: the key of an `anthropic/…` model, required then. Locally only, another catalog provider's key is read from its own variable, such as `OPENAI_API_KEY`; `dex-app.yaml` declares no such variable, so hosted the model is Anthropic's or a custom endpoint |
+| `SIGNUP_AGENT_PI_BASE_URL`, `SIGNUP_AGENT_PI_API_KEY` | pi with a custom endpoint: the base URL selects it, and its key is required then. For `openai` the base URL is the part before `/chat/completions` (such as `https://llm.example.com/v1`), for `anthropic` the part before `/v1/messages` (such as `https://llm.example.com/anthropic`); no query. Thinking an OpenAI-compatible endpoint streams as `reasoning_content` is not sent back in later requests |
+| `SIGNUP_AGENT_PI_PROTOCOL` | Optional, only with `SIGNUP_AGENT_PI_BASE_URL`: the endpoint's API, `openai` (default, Chat Completions) or `anthropic` (Messages, the key sent as `x-api-key`; `ANTHROPIC_API_KEY` is never used) |
 | `SIGNUP_AGENT_CLAUDE_MODEL`, `SIGNUP_AGENT_CLAUDE_AUTH`, `SIGNUP_AGENT_CLAUDE_CLI` | Claude Agent SDK: the model (`claude-opus-5-5`), `login` (default) or `api-key`, and an optional Claude Code CLI path |
 | `GITHUB_TOKEN` | Optional, raises the GitHub API rate limit |
 | `SIGNUP_REVIEW_SINCE` | Required. RFC 3339 time, such as `2026-11-13T00:00:00Z`: only sign-ups registered since then are reviewed |
 | `SIGNUP_WATCH_INTERVAL_SECONDS` | Seconds between reads of the pending sign-ups (30) |
 | `SIGNUP_WORKER_SLOTS` | The Worker's execution slots (64). A running turn or tool call takes one while it runs; a review that waits for a reply takes none |
+
+How the pi model settings combine; any other combination stops the start with a message that says what to set:
+
+- No `SIGNUP_AGENT_PI_BASE_URL`: `SIGNUP_AGENT_PI_MODEL` names a provider and model of pi-ai's catalog, such as
+  `anthropic/claude-opus-5-5` (the default). A value without a catalog provider, such as `openai` or
+  `qwen3.8-flash-next`, is refused and points to `SIGNUP_AGENT_PI_BASE_URL`, and so is `SIGNUP_AGENT_PI_PROTOCOL`.
+- `SIGNUP_AGENT_PI_BASE_URL` set: `SIGNUP_AGENT_PI_MODEL` is required, and `SIGNUP_AGENT_PI_PROTOCOL` is `openai`
+  unless set to `anthropic`.
+  - `openai`: the model is the endpoint's model ID as it is, slashes included, such as `meta-llama/Llama-3`. A value
+    that starts with a pi-ai catalog provider, such as `anthropic/…` or `openai/…`, is refused as ambiguous: write
+    such an ID with the prefix `openai-compatible/`, as in `openai-compatible/openai/gpt-oss-120b`. The older form
+    `openai-compatible/<model ID>` keeps working for any ID, and needs the base URL too.
+  - `anthropic`: the model is the endpoint's model ID as it is, whatever it starts with, since the protocol was
+    chosen explicitly; the `openai-compatible/` prefix is refused.
 
 ## Run it on Superverse
 
@@ -276,9 +292,11 @@ The repository is a Superverse application of the TypeScript base (`node-ts`, bu
 - **Project configuration.** Set the application environment in Setup: `REVIEW_API_URL`, the secrets
   `REVIEW_API_KEY`, `SIGNUP_REVIEW_SINCE`, the model, and optionally `SIGNUP_WATCH_INTERVAL_SECONDS` and the secret
   `GITHUB_TOKEN`. The model is the secret `ANTHROPIC_API_KEY` for the default `anthropic/claude-opus-5-5`, or
-  `SIGNUP_AGENT_PI_MODEL=openai-compatible/<model ID>` with `SIGNUP_AGENT_PI_BASE_URL` and the secret
-  `SIGNUP_AGENT_PI_API_KEY`. `dex-app.yaml` marks none of the model settings required, because which ones are
-  depends on the model; the processes refuse to start without them. The processes apply it to a copy of their
+  `SIGNUP_AGENT_PI_BASE_URL`, `SIGNUP_AGENT_PI_MODEL` set to the endpoint's model ID and the secret
+  `SIGNUP_AGENT_PI_API_KEY`, with the choice `SIGNUP_AGENT_PI_PROTOCOL` left unset for `openai` or set to
+  `anthropic`. `dex-app.yaml` marks none of the model settings required, because which ones are
+  depends on the model, and the manifest schema has no description or pattern for a setting; the processes check
+  the combination at start (see Run it locally) and refuse to start with a message that says what to set. The processes apply it to a copy of their
   environment, never to `process.env`. The platform sets `PORT` (8080 on Live, 3000 on Preview, web only),
   `DEX_FLOW_SERVICE_ADDRESS`, `DEX_TOKEN_URL`, `DEX_BLOB_CACHE_DIR` and, on Live, `DEX_API_KEY` and `DEX_SERVER_ID`.
 - **Connections.** `review-slack` is the Project's shared Slack connection. Fill in the `signup-review-reply`
