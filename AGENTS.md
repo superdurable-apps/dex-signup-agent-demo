@@ -4,7 +4,8 @@ Dex `node-ts-v1`, TypeScript on Node.js 22: a pi agent on Dex Agents that review
 admins in Slack. One agent session per sign-up (`signup-review-<accountId>`) is the only Flow. A watcher in the
 Worker process starts each pending sign-up's session; the Slack connector's `threadReplyCreated` Trigger, in the
 web process, delivers each reviewer reply to its session through the session Flow's `send_user_message` RPC. The
-README describes the design and its limits.
+README gives the overview and the local run; `docs/design.md` describes the design, the send policy and the limits,
+`docs/superverse.md` the hosted setup, and `docs/reference.md` the configuration, commands, files and tests.
 
 ## Files to change for a feature
 
