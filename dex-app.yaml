@@ -65,7 +65,7 @@
       "connectorId": "gmail",
       "package": "@superdurable/connector-google-gmail",
       "version": "0.3.0",
-      "authMethodId": "",
+      "authMethodId": "google-oauth",
       "operations": ["sendMessage"]
     }
   ]
