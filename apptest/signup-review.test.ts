@@ -43,6 +43,8 @@ const options = {
     SLACK_REVIEW_CHANNEL: reviewChannelId,
     SIGNUP_REVIEWER_SLACK_IDS: reviewerId,
     SIGNUP_AGENT_HARNESS: "pi",
+    // The default pi model is an Anthropic one, which requires a key; the scripted model below replaces it.
+    ANTHROPIC_API_KEY: "sk-ant-test-not-a-real-key",
   },
   project: await socketModeProject(),
   slack: slack.connection(),

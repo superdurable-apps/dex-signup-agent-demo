@@ -18,9 +18,7 @@
       },
       {
         "name": "ANTHROPIC_API_KEY",
-        "required": true,
-        "secret": true,
-        "minLength": 1
+        "secret": true
       },
       {
         "name": "SIGNUP_REVIEW_SINCE",
@@ -33,6 +31,13 @@
       },
       {
         "name": "SIGNUP_AGENT_PI_MODEL"
+      },
+      {
+        "name": "SIGNUP_AGENT_PI_BASE_URL"
+      },
+      {
+        "name": "SIGNUP_AGENT_PI_API_KEY",
+        "secret": true
       },
       {
         "name": "SIGNUP_WATCH_INTERVAL_SECONDS"
