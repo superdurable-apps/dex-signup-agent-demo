@@ -5,7 +5,7 @@ Configuration, commands, files and tests. For the overview, see the [README](../
 ## Configuration
 
 Locally, `npm start` loads `.env` (copy [`.env.example`](../.env.example)). Hosted, the application environment
-comes from the Project configuration; see [superverse.md](superverse.md#setup). [`src/config.ts`](../src/config.ts)
+comes from the Project configuration; see [dex-cloud.md](dex-cloud.md#setup). [`src/config.ts`](../src/config.ts)
 reads and checks it at start, and a bad value stops the start with a message that says what to set.
 
 | Variable | Meaning |
@@ -70,7 +70,7 @@ a message that says what to set.
 | `npm run typecheck` | Type-checks sources and tests |
 | `npm test` / `make test` | The scenario suite of both harnesses (`test/`) |
 | `make bootstrap` | Downloads the Go module of `tools/appmanifest`, then restores `node_modules` from `package-lock.json` (`npm ci --ignore-scripts`), only when the lockfile changed |
-| `make check-fdg-v2` | Reads `dex-app.yaml` through `tools/appmanifest`, then checks the committed session graph and the connector entries (see [superverse.md](superverse.md#session-graphs)) |
+| `make check-fdg-v2` | Reads `dex-app.yaml` through `tools/appmanifest`, then checks the committed session graph and the connector entries (see [dex-cloud.md](dex-cloud.md#session-graphs)) |
 | `make check-static` | `check-fdg-v2`, then the type check and the build |
 | `make test-app [RUN=<regexp>]` | The app tests (`apptest/`), optionally selected by name |
 | `make session-graphs` | Writes both harnesses' session graphs with the reply Trigger binding |
@@ -98,8 +98,8 @@ decoder: `go run -C tools/appmanifest . ../../dex-app.yaml` prints the canonical
 | [`src/main.ts`](../src/main.ts), [`src/runtime.ts`](../src/runtime.ts), [`src/http.ts`](../src/http.ts), [`src/dex.ts`](../src/dex.ts) | The process entry, the hosted runtime settings, the HTTP server and the Dex connection |
 | [`flow-definitions/`](../flow-definitions) | The committed session graphs of both harnesses |
 | [`scripts/`](../scripts) | `bootstrap.sh`, `render-flow-definitions.py` (behind `check-fdg-v2`) and the binding's Setup units |
-| [`dex-app.yaml`](../dex-app.yaml), [`.superverse/template.json`](../.superverse/template.json), [`openapi/openapi.yaml`](../openapi/openapi.yaml) | The Superverse application manifest (strict YAML, see [superverse.md](superverse.md#connect-a-repository)), template and HTTP API |
-| [`tools/appmanifest/`](../tools/appmanifest) | The platform's `dex-app.yaml` decoder (MIT, a Go module of its own), copied unchanged from the Superverse TypeScript template; do not edit it |
+| [`dex-app.yaml`](../dex-app.yaml), [`.dex/template.json`](../.dex/template.json), [`openapi/openapi.yaml`](../openapi/openapi.yaml) | The Dex Cloud application manifest (strict YAML, see [dex-cloud.md](dex-cloud.md#connect-a-repository)), template and HTTP API |
+| [`tools/appmanifest/`](../tools/appmanifest) | The platform's `dex-app.yaml` decoder (MIT, a Go module of its own), copied unchanged from the Dex Cloud TypeScript template; do not edit it |
 | [`apptest/`](../apptest), [`test/`](../test) | The app tests and the scenario and unit tests |
 
 ## Tests

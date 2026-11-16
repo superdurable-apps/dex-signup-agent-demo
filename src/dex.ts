@@ -1,5 +1,5 @@
 // How the processes reach Dex: the server address, TLS, and the API key a remote or Live server exchanges for tokens.
-// The Live credential and its CA handling follow the Superverse node-ts base.
+// The Live credential and its CA handling follow the Dex Cloud node-ts base.
 
 import { readFileSync } from "node:fs";
 import { request } from "node:https";

@@ -5,7 +5,7 @@ admins in Slack. One agent session per sign-up (`signup-review-<accountId>`) is 
 Worker process starts each pending sign-up's session; the Slack connector's `threadReplyCreated` Trigger, in the
 web process, delivers each reviewer reply to its session through the session Flow's `send_user_message` RPC. The
 README gives the overview and the local run; `docs/design.md` describes the design, the send policy and the limits,
-`docs/superverse.md` the hosted setup, and `docs/reference.md` the configuration, commands, files and tests.
+`docs/dex-cloud.md` the hosted setup, and `docs/reference.md` the configuration, commands, files and tests.
 
 ## Files to change for a feature
 
@@ -21,7 +21,7 @@ The session Flow's graph is committed, not rendered: dex-app.yaml declares
 `@superdurable/dex-agents` update, or a change to the Slack reply binding or the Slack connector version, write
 both harnesses' graphs again with `make session-graphs`; it passes
 `--trigger-bindings scripts/session-trigger-bindings.json`, so each graph declares the `signup-review-reply` binding
-in `v2.connectorTriggerBindings`, which Superverse Setup requires. `make check-fdg-v2` fails while a graph differs
+in `v2.connectorTriggerBindings`, which Dex Cloud Setup requires. `make check-fdg-v2` fails while a graph differs
 from the generator's output or its binding differs from `dex-app.yaml`. Never edit a graph by hand, and never rename
 the Flow type of a session with open reviews.
 
