@@ -36,6 +36,27 @@ export type PiModelSelection =
   | { readonly kind: "catalog"; readonly name: string; readonly apiKey: string | undefined }
   | { readonly kind: "openai-compatible"; readonly modelId: string; readonly baseUrl: string; readonly apiKey: string };
 
+/** SIGNUP_AGENT_PI_BASE_URL: an http(s) URL with a host and no query or fragment, before `/chat/completions`. */
+function openAICompatibleBaseUrl(value: string): string {
+  const invalid = (reason: string) => new Error(`SIGNUP_AGENT_PI_BASE_URL ${reason}; give the base URL only, such as https://llm.example.com/v1`);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw invalid("is not a URL");
+  }
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.hostname === "") {
+    throw invalid("must be an http(s) URL with a host");
+  }
+  if (url.search !== "" || url.hash !== "" || value.includes("?") || value.includes("#")) {
+    throw invalid("must not have a query or a fragment");
+  }
+  if (/\/chat\/completions\/?$/.test(url.pathname)) {
+    throw invalid("must not end in /chat/completions, which pi-ai appends");
+  }
+  return value;
+}
+
 /**
  * SIGNUP_AGENT_PI_MODEL `openai-compatible/<model ID>` selects SIGNUP_AGENT_PI_BASE_URL with SIGNUP_AGENT_PI_API_KEY;
  * an `anthropic/…` model requires ANTHROPIC_API_KEY; any other catalog model uses its provider's key from the environment.
@@ -48,10 +69,7 @@ function piModelSelection(optional: (name: string) => string | undefined, requir
   }
   const provider = name.slice(0, separator);
   if (provider === openAICompatibleProvider) {
-    const baseUrl = required("SIGNUP_AGENT_PI_BASE_URL");
-    if (!/^https?:\/\/[^/]/.test(baseUrl)) {
-      throw new Error("SIGNUP_AGENT_PI_BASE_URL must be an http(s) URL, such as https://llm.example.com/v1");
-    }
+    const baseUrl = openAICompatibleBaseUrl(required("SIGNUP_AGENT_PI_BASE_URL"));
     return { kind: "openai-compatible", modelId: name.slice(separator + 1), baseUrl, apiKey: required("SIGNUP_AGENT_PI_API_KEY") };
   }
   if (optional("SIGNUP_AGENT_PI_BASE_URL") !== undefined) {

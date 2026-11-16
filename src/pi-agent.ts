@@ -1,7 +1,7 @@
 // The pi harness: Dex's built-in agent loop runs the session, pi-ai makes each model call.
 // Every model call and every tool call is its own Dex Step.
 
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Context, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels, type BuiltinProvider } from "@earendil-works/pi-ai/providers/all";
 import { createBuiltinAgentSessionFlow, functionTool, type ModelClient } from "@superdurable/dex-agents/builtin-loop";
 import { createPiAiModelClient } from "@superdurable/dex-agents-pi";
@@ -31,7 +31,7 @@ export const openAICompatibleMaxTokens = 16_384;
  * provider, so pi-ai streams it with its generic `openai-completions` client and never reads a provider key from the
  * environment. The compat settings are explicit rather than detected from the URL: no `store` field, the `system`
  * role, `max_tokens`, and no reasoning parameters, so the endpoint decides whether the model reasons. Streamed
- * `reasoning_content` becomes thinking, as with any OpenAI-compatible model.
+ * `reasoning_content` becomes thinking, which {@link configuredPiModel} leaves out of later requests.
  */
 export function openAICompatibleModel(modelId: string, baseUrl: string): Model<"openai-completions"> {
   return {
@@ -49,10 +49,26 @@ export function openAICompatibleModel(modelId: string, baseUrl: string): Model<"
   };
 }
 
+/**
+ * The request context without the thinking of earlier responses. pi-ai replays streamed `reasoning_content` as a field
+ * of the assistant messages it sends back, which an OpenAI-compatible endpoint may reject; the text, the tool calls and
+ * the tool results stay. The session keeps the thinking it stored: only this request leaves it out.
+ */
+export function withoutReplayedThinking(context: Context): Context {
+  return {
+    ...context,
+    messages: context.messages.map((message) =>
+      message.role === "assistant" && message.content.some((block) => block.type === "thinking")
+        ? { ...message, content: message.content.filter((block) => block.type !== "thinking") }
+        : message,
+    ),
+  };
+}
+
 /** The model client of the configured pi model. */
 export function configuredPiModel(selection: PiModelSelection): ModelClient {
   return selection.kind === "openai-compatible"
-    ? createPiAiModelClient(openAICompatibleModel(selection.modelId, selection.baseUrl), { apiKey: selection.apiKey })
+    ? createPiAiModelClient(openAICompatibleModel(selection.modelId, selection.baseUrl), { apiKey: selection.apiKey, prepareRequest: withoutReplayedThinking })
     : piModel(selection.name, selection.apiKey);
 }
 

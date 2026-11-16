@@ -235,8 +235,8 @@ You need Node.js 22.19 or later (24 recommended, `.nvmrc`) and
 | `DEX_CONNECTOR_CONFIG_FILE` | The connector configuration with `review-slack` and `welcome-gmail` |
 | `SIGNUP_AGENT_HARNESS` | `pi` (default) or `claude-agent-sdk` |
 | `SIGNUP_AGENT_PI_MODEL` | pi: `<provider>/<model ID>` of pi-ai's catalog (`anthropic/claude-opus-5-5`), or `openai-compatible/<model ID>` |
-| `ANTHROPIC_API_KEY` | pi: the key of an `anthropic/…` model, required then. Any other catalog provider's key is read from its own variable, such as `OPENAI_API_KEY` |
-| `SIGNUP_AGENT_PI_BASE_URL`, `SIGNUP_AGENT_PI_API_KEY` | pi with `openai-compatible/<model ID>`, both required then: the endpoint's base URL (the part before `/chat/completions`, such as `https://llm.example.com/v1`) and its key |
+| `ANTHROPIC_API_KEY` | pi: the key of an `anthropic/…` model, required then. Locally only, another catalog provider's key is read from its own variable, such as `OPENAI_API_KEY`; `dex-app.yaml` declares no such variable, so hosted the model is Anthropic's or `openai-compatible/…` |
+| `SIGNUP_AGENT_PI_BASE_URL`, `SIGNUP_AGENT_PI_API_KEY` | pi with `openai-compatible/<model ID>`, both required then: the endpoint's base URL (the part before `/chat/completions`, such as `https://llm.example.com/v1`, without a query) and its key. Thinking the endpoint streams as `reasoning_content` is not sent back in later requests |
 | `SIGNUP_AGENT_CLAUDE_MODEL`, `SIGNUP_AGENT_CLAUDE_AUTH`, `SIGNUP_AGENT_CLAUDE_CLI` | Claude Agent SDK: the model (`claude-opus-5-5`), `login` (default) or `api-key`, and an optional Claude Code CLI path |
 | `GITHUB_TOKEN` | Optional, raises the GitHub API rate limit |
 | `SIGNUP_REVIEW_SINCE` | Required. RFC 3339 time, such as `2026-11-13T00:00:00Z`: only sign-ups registered since then are reviewed |

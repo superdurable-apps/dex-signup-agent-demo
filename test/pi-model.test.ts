@@ -7,6 +7,8 @@ import test from "node:test";
 
 import type { Context } from "@earendil-works/pi-ai";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
+import type { ModelClient, ModelInputItem, ModelRequest, ModelResponse } from "@superdurable/dex-agents/builtin-loop";
+import { createPiAiModelClient } from "@superdurable/dex-agents-pi";
 
 import { loadSignupAgentConfig } from "../src/config.ts";
 import { configuredPiModel, openAICompatibleMaxTokens, openAICompatibleModel } from "../src/pi-agent.ts";
@@ -37,7 +39,29 @@ test("openai-compatible/<model ID> selects the endpoint and its key, and needs n
   assert.deepEqual(configOf({ ...environment, SIGNUP_AGENT_PI_MODEL: "openai-compatible/Qwen/Qwen3-8B" }).piModel, { kind: "openai-compatible", modelId: "Qwen/Qwen3-8B", baseUrl: "https://llm.example.com/v1", apiKey: "sk-qwen" });
   assert.throws(() => configOf({ ...environment, SIGNUP_AGENT_PI_API_KEY: "" }), /SIGNUP_AGENT_PI_API_KEY is required/);
   assert.throws(() => configOf({ ...environment, SIGNUP_AGENT_PI_BASE_URL: "" }), /SIGNUP_AGENT_PI_BASE_URL is required/);
-  assert.throws(() => configOf({ ...environment, SIGNUP_AGENT_PI_BASE_URL: "llm.example.com/v1" }), /SIGNUP_AGENT_PI_BASE_URL must be an http\(s\) URL/);
+});
+
+test("SIGNUP_AGENT_PI_BASE_URL must be an http(s) base URL with a host, without a query, a fragment or /chat/completions", () => {
+  const environment = { SIGNUP_AGENT_PI_MODEL: "openai-compatible/qwen3.8-flash-next", SIGNUP_AGENT_PI_API_KEY: "sk-qwen" };
+  const baseUrlOf = (url: string) => (configOf({ ...environment, SIGNUP_AGENT_PI_BASE_URL: url }).piModel as { baseUrl: string }).baseUrl;
+  for (const valid of ["https://llm.example.com/v1", "http://127.0.0.1:8000/v1", "https://llm.example.com", "https://llm.example.com/compatible-mode/v1/"]) {
+    assert.equal(baseUrlOf(valid), valid);
+  }
+  const refusals: [string, RegExp][] = [
+    ["llm.example.com/v1", /is not a URL/],
+    ["https://?x", /is not a URL/],
+    ["https://#x", /is not a URL/],
+    ["https://host space/v1", /is not a URL/],
+    ["ftp://llm.example.com/v1", /must be an http\(s\) URL with a host/],
+    ["https://llm.example.com/v1?api-version=1", /must not have a query or a fragment/],
+    ["https://llm.example.com/v1?", /must not have a query or a fragment/],
+    ["https://llm.example.com/v1#models", /must not have a query or a fragment/],
+    ["https://llm.example.com/v1/chat/completions", /must not end in \/chat\/completions/],
+    ["https://llm.example.com/v1/chat/completions/", /must not end in \/chat\/completions/],
+  ];
+  for (const [url, error] of refusals) {
+    assert.throws(() => baseUrlOf(url), (thrown: Error) => error.test(thrown.message) && /give the base URL only/.test(thrown.message), url);
+  }
 });
 
 test("a base URL without the openai-compatible model, or a model without a provider, is refused", () => {
@@ -63,14 +87,23 @@ interface CapturedRequest {
   readonly body: Record<string, any>;
 }
 
-/** A Chat Completions endpoint that streams the chunks once per request and records each request. */
-async function streamingEndpoint(chunks: readonly object[]) {
+/**
+ * A Chat Completions endpoint that records each request and streams the chunks the responder gives for it, or answers
+ * 400 when the responder gives none.
+ */
+async function streamingEndpoint(respond: (body: string, requestNumber: number) => readonly object[] | undefined) {
   const requests: CapturedRequest[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (piece) => (body += piece));
     request.on("end", () => {
       requests.push({ url: request.url, headers: request.headers, body: JSON.parse(body) });
+      const chunks = respond(body, requests.length);
+      if (chunks === undefined) {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "unknown field reasoning_content", type: "invalid_request_error" } }));
+        return;
+      }
       response.writeHead(200, { "content-type": "text/event-stream" });
       for (const chunk of chunks) {
         response.write(`data: ${JSON.stringify(chunk)}\n\n`);
@@ -109,7 +142,7 @@ const context: Context = {
 
 for (const repeatIdAndName of [false, true]) {
   test(`pi-ai reads reasoning_content and tool-call deltas that repeat "type":"function"${repeatIdAndName ? ", the id and the name" : ""}`, async () => {
-    const endpoint = await streamingEndpoint(toolCallChunks(repeatIdAndName));
+    const endpoint = await streamingEndpoint(() => toolCallChunks(repeatIdAndName));
     try {
       const message = await streamSimple(openAICompatibleModel("qwen3.8-flash-next", endpoint.baseUrl), context, { apiKey: "sk-qwen", maxRetries: 0 }).result();
       assert.equal(message.stopReason, "toolUse", message.errorMessage);
@@ -136,3 +169,59 @@ for (const repeatIdAndName of [false, true]) {
     }
   });
 }
+
+const modelRequest = (inputItems: readonly ModelInputItem[], attempt: number): ModelRequest => ({
+  instructions: "You review sign-ups.",
+  inputItems,
+  tools: [{ name: "lookup_profile", description: "Looks up a profile.", parameters: { type: "object", properties: { accountId: { type: "string" } }, required: ["accountId"] } }],
+  toolChoice: "auto",
+  settings: {},
+  metadata: { flowId: "signup-review-a-1", turnId: "turn-1", stepExecutionId: `step-${attempt}`, attempt: 1 },
+  cancellationSignal: new AbortController().signal,
+});
+const discard = { writeTextDelta: () => {}, writeReasoningDelta: () => {} };
+const answerChunks = [chunk({ role: "assistant", content: "Account a-1 looks fine." }), chunk({}, "stop")];
+
+/** One tool loop: the first call streams thinking and a tool call, the second sends the tool result back. */
+async function toolLoop(client: ModelClient): Promise<{ first: ModelResponse; second: ModelResponse | Error }> {
+  const user: ModelInputItem = { type: "user_text", text: "Review account a-1." };
+  const first = await client.callModel(modelRequest([user], 1), discard);
+  assert.deepEqual(first.toolCalls.map((call) => call.toolName), ["lookup_profile"]);
+  const result: ModelInputItem = { type: "tool_result", toolCallId: first.toolCalls[0]!.toolCallId, toolName: "lookup_profile", output: '{"github":"octocat"}' };
+  try {
+    return { first, second: await client.callModel(modelRequest([user, ...first.outputItems, result], 2), discard) };
+  } catch (error) {
+    return { first, second: error as Error };
+  }
+}
+
+test("the OpenAI-compatible model leaves earlier thinking out of the request that returns the tool result", async () => {
+  // The endpoint rejects any request that carries reasoning_content, as some OpenAI-compatible endpoints do.
+  const respond = (body: string, requestNumber: number) => (body.includes("reasoning_content") ? undefined : requestNumber === 1 ? toolCallChunks(false) : answerChunks);
+  const endpoint = await streamingEndpoint(respond);
+  try {
+    const { first, second } = await toolLoop(configuredPiModel({ kind: "openai-compatible", modelId: "qwen3.8-flash-next", baseUrl: endpoint.baseUrl, apiKey: "sk-qwen" }));
+    // The session still stores the thinking; only the request leaves it out.
+    assert.ok(first.outputItems.some((item) => item.item.includes("Check the profile first.")));
+    assert.ok(!(second instanceof Error), String(second));
+    assert.equal(second.text, "Account a-1 looks fine.");
+    const followUp = endpoint.requests[1]!.body;
+    assert.equal(JSON.stringify(followUp).includes("reasoning_content"), false);
+    const assistant = followUp.messages.find((message: { role: string }) => message.role === "assistant");
+    assert.deepEqual(assistant.tool_calls.map((call: { id: string; function: { name: string; arguments: string } }) => [call.id, call.function.name, JSON.parse(call.function.arguments)]), [["call_1", "lookup_profile", { accountId: "a-1" }]]);
+    const tool = followUp.messages.find((message: { role: string }) => message.role === "tool");
+    assert.deepEqual([tool.tool_call_id, tool.content], ["call_1", '{"github":"octocat"}']);
+  } finally {
+    await endpoint.close();
+  }
+
+  // Without the hook, pi-ai replays the thinking and the same endpoint rejects the follow-up.
+  const control = await streamingEndpoint(respond);
+  try {
+    const { second } = await toolLoop(createPiAiModelClient(openAICompatibleModel("qwen3.8-flash-next", control.baseUrl), { apiKey: "sk-qwen" }));
+    assert.ok(second instanceof Error);
+    assert.ok(JSON.stringify(control.requests[1]!.body).includes("reasoning_content"));
+  } finally {
+    await control.close();
+  }
+});
