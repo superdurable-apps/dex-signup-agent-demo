@@ -64,9 +64,12 @@ export class ReviewApiTestStub {
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
 
-  /** Adds a pending sign-up. */
+  /**
+   * Adds a pending sign-up. Like the server, the optional answers jobTitle, company and purpose are empty unless
+   * given; pass one as undefined to leave it out of the JSON, as an older server does.
+   */
   public addPendingAccount(account: Omit<Account, "status" | "revision" | "registeredAt"> & Partial<Account>): Account {
-    const stored: Account = { status: "pending_approval", revision: 0, registeredAt: new Date().toISOString(), emailVerifiedAt: null, ...account };
+    const stored: Account = { status: "pending_approval", revision: 0, registeredAt: new Date().toISOString(), emailVerifiedAt: null, jobTitle: "", company: "", purpose: "", ...account };
     this.accounts.set(stored.accountId, { account: stored });
     return stored;
   }

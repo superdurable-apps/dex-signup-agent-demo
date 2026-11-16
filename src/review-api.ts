@@ -9,6 +9,10 @@ const AccountSchema = z.object({
   displayName: z.string().nullish(),
   profileUrl: z.string().nullish(),
   signupMethod: z.string().nullish(),
+  // Optional, self-reported sign-up answers: empty when the applicant gave none, absent from older servers.
+  jobTitle: z.string().nullish(),
+  company: z.string().nullish(),
+  purpose: z.string().nullish(),
   status: z.enum(["pending_verification", "pending_approval", "active", "rejected", "expired", "disabled"]),
   registeredAt: z.string().min(1),
   emailVerifiedAt: z.string().nullish(),

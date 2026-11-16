@@ -87,7 +87,7 @@ a message that says what to set.
 | [`src/pi-agent.ts`](../src/pi-agent.ts), [`src/claude-agent.ts`](../src/claude-agent.ts) | The two harnesses |
 | [`src/application.ts`](../src/application.ts) | `loadApplication`: the configuration, services and each mode's background work |
 | [`src/config.ts`](../src/config.ts) | The configuration and the pi model rules |
-| [`src/review-api.ts`](../src/review-api.ts) | The Dex Cloud ReviewAPI client |
+| [`src/review-api.ts`](../src/review-api.ts) | The Dex Cloud ReviewAPI client, including the optional sign-up answers `jobTitle`, `company` and `purpose` |
 | [`src/profile-sources.ts`](../src/profile-sources.ts) | `fetch_profile` and `github_user` |
 | [`src/main.ts`](../src/main.ts), [`src/runtime.ts`](../src/runtime.ts), [`src/http.ts`](../src/http.ts), [`src/dex.ts`](../src/dex.ts) | The process entry, the hosted runtime settings, the HTTP server and the Dex connection |
 | [`flow-definitions/`](../flow-definitions) | The committed session graphs of both harnesses |
@@ -138,6 +138,7 @@ Scenarios:
 
 **Unit tests** (`test/`): the reply target's routing (filtered, delivered, dropped, retried for a recent thread,
 dropped for a disputed thread); the review records read from tool results and never from a turn note; the index
-refusing a thread two accounts claim; the send cap of send_welcome_email's outcome reply against the SDK fence; the
+refusing a thread two accounts claim; the optional sign-up answers (`jobTitle`, `company`, `purpose`) read when
+present, absent or empty, given to the agent only when present, and shown escaped and cut in the review post; the send cap of send_welcome_email's outcome reply against the SDK fence; the
 pi model rules and custom endpoints; and `fetch_profile`'s checks for private addresses, redirects to private
 addresses and linear-time parsing of adversarial HTML.
