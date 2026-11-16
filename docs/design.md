@@ -36,12 +36,12 @@ The prompt is `signupAgentPrompt` in [`src/signup-agent.ts`](../src/signup-agent
 | --- | --- | --- | --- |
 | `fetch_profile(url)` | Reads one public HTTPS page as text | `read` | `https` on port 443 only, no credentials in the URL, 1 MB, 10 s, 3 redirects; every resolved address must be public |
 | `github_user(login)` | GitHub public API: the user and their most starred repositories | `read` | |
-| `post_review(recommendation, reasons, emailSubject, emailBody)` | Slack `postChannelMessage` in the review channel: the review, draft 1 in a code block, the harness and the reply instructions. Its result holds the thread and draft 1, and is the session's record of the review | Connector write. Manifest: `limited`, `maxSends` 3. App cap: 1 | Refused once the session's records hold a post_review that succeeded or whose outcome is unknown |
+| `post_review(recommendation, reasons, emailSubject, emailBody)` | Slack `postChannelMessage` in the review channel: the review, draft 1 in a code block, the harness and the reply instructions. Its result holds the thread and draft 1, and is the session's record of the review | `non_idempotent_write`, one tool Step. Manifest: `limited`, `maxSends` 3. App cap: 1 | Refused once the session's records hold a post_review that succeeded or whose outcome is unknown |
 | `post_draft(subject, body)` | Slack `postThreadReply` with `[draft <n>]`. Its result is the record of the new latest draft. The footer follows the account's status at post time: `Reply send to send this draft` once it is active, otherwise `Approve the account first` | Same as post_review | Needs the review thread. Refused when subject and body equal the latest draft |
 | `reply_in_thread(text)` | Slack `postThreadReply` | Same as post_review | Needs the review thread |
 | `approve_account()` | ReviewAPI `approve`, then a thread reply with the outcome (see [Decisions](#decisions)) | The thread reply is the connector write. Same cap as post_review | See [Decisions](#decisions) |
-| `reject_account(reason)` | ReviewAPI `reject` the same way, then `Rejected <name>: <reason>.` or `Rejection failed: <error>.` | Same as approve_account | Same as approve_account |
-| `send_welcome_email()` | Gmail `sendMessage` of the **latest posted draft** to the applicant, then a thread reply with the outcome (see [The welcome email](#the-welcome-email)) | Gmail write. Manifest: `limited`, `maxSends` 3. App cap: 1. The outcome reply is a second Slack call capped at 1 | The account is active and a draft is posted. Refused with `the welcome email for draft <n> was already sent in this review` when the session's records hold a send of that draft that did not definitely fail |
+| `reject_account(reason)` | ReviewAPI `reject` the same way, then `Rejected <name> (<email>): <reason>.` or `Rejection failed: <error>.` | Same as approve_account | Same as approve_account |
+| `send_welcome_email()` | Gmail `sendMessage` of the **latest posted draft** to the applicant, then a thread reply with the outcome (see [The welcome email](#the-welcome-email)) | `non_idempotent_write`, one tool Step. Manifest: `limited`, `maxSends` 3. App cap: 1. The outcome reply is a second Slack call capped at 1 | The account is active and a draft is posted. Refused with `the welcome email for draft <n> was already sent in this review` when the session's records hold a send of that draft that did not definitely fail |
 | `finish_review()` | Cancels its own session (a session never ends on its own) | `idempotent_write` | The account is no longer pending |
 
 No tool asks for Dex tool approval (`requiresApproval: false`), and no tool checks the reviewers' replies: the
@@ -146,7 +146,7 @@ approve_account and reject_account:
 
 - Approve asks to leave Dex Cloud's own approval mail out (`suppressApprovedMail: true`). A server that does not
   support that yet refuses, and the thread reply says so.
-- A busy (429 or 5xx) or unreachable ReviewAPI is tried again, up to 3 times.
+- A busy (429 or 5xx) or unreachable ReviewAPI is tried up to 3 times in all.
 - An account already active counts as approved; one decided the other way, or a refused request, is a failure.
 - Thread replies: `Approved <name> (<email>) on Dex Cloud. Reply send to email the welcome message.` or
   `Approval failed: <error>.`
@@ -173,7 +173,8 @@ send_welcome_email sends the latest posted draft and replies in the thread:
 
 - `Sent the welcome email to <email>.`
 - When Gmail conclusively rejects the message (`providerRejected`): `Sending the welcome email failed: <reason>.
-  Nothing was sent.` The tool throws, so the call is recorded as failed and the draft can be sent again.
+  Nothing was sent.` The tool throws, so the call is recorded as a definite failure, and the tool would not refuse a
+  later send of this draft. The prompt still tells the model not to call it again after a failure.
 - For any outcome Gmail leaves unknown: `Sending the welcome email failed: <error>. Check Sent Mail; if nothing went
   out, send it manually.` The call is recorded as `outcome_unknown`, and the draft counts as sent.
 

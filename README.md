@@ -18,7 +18,7 @@ decide, ask for changes to the email, and finally say `send`.
   - Anything else is feedback on the email, and the agent posts a new draft.
   - `send`, once the account is approved: emails the latest draft to the applicant from the team's Gmail.
 - **Outcomes in the thread.** The approve, reject and send tools post their outcome in the thread themselves.
-  Sending is capped at one attempt, so a crash or a lost answer never posts or sends twice.
+  The app caps each Slack post and email at one send, so a crash or a lost answer never posts or sends twice.
 - **End.** The agent posts a summary and ends the review.
 
 The application is the agent's **prompt and tools**. One Dex agent session per sign-up runs the process from the
