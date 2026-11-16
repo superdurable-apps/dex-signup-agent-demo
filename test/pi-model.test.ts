@@ -292,12 +292,17 @@ test("SIGNUP_AGENT_PI_PROTOCOL picks the custom endpoint's API, openai by defaul
   }
 });
 
-/** Anthropic Messages stream events: a tool call whose input arrives in pieces, or a text answer. */
+/** Anthropic Messages stream events: signed thinking, then a tool call whose input arrives in pieces; or a text answer. */
 const anthropicToolCallEvents = [
   { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude-compatible", content: [], stop_reason: null, usage: { input_tokens: 40, output_tokens: 1 } } },
-  { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "lookup_profile", input: {} } },
-  ...['{"account', 'Id":"a-1"', "}"].map((piece) => ({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: piece } })),
+  { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } },
+  { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Check the " } },
+  { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "profile first." } },
+  { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig-abc123" } },
   { type: "content_block_stop", index: 0 },
+  { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "toolu_1", name: "lookup_profile", input: {} } },
+  ...['{"account', 'Id":"a-1"', "}"].map((piece) => ({ type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: piece } })),
+  { type: "content_block_stop", index: 1 },
   { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 12 } },
   { type: "message_stop" },
 ];
@@ -310,41 +315,54 @@ const anthropicAnswerEvents = [
   { type: "message_stop" },
 ];
 
-test("the Anthropic-compatible model calls <base URL>/v1/messages with SIGNUP_AGENT_PI_API_KEY, never ANTHROPIC_API_KEY", async () => {
-  const saved = { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN };
-  process.env.ANTHROPIC_API_KEY = "sk-ant-from-environment";
-  process.env.ANTHROPIC_AUTH_TOKEN = "token-from-environment";
-  const endpoint = await streamingEndpoint((_body, requestNumber) => (requestNumber === 1 ? anthropicToolCallEvents : anthropicAnswerEvents));
-  try {
-    const baseUrl = endpoint.baseUrl.replace(/\/v1$/, "/anthropic");
-    const environment = { SIGNUP_AGENT_PI_BASE_URL: baseUrl, SIGNUP_AGENT_PI_PROTOCOL: "anthropic", SIGNUP_AGENT_PI_MODEL: "claude-compatible", SIGNUP_AGENT_PI_API_KEY: "sk-custom" };
-    const { first, second } = await toolLoop(configuredPiModel(configOf(environment).piModel!));
-    assert.deepEqual(first.toolCalls.map((call) => [call.toolCallId, call.toolName, JSON.parse(call.arguments)]), [["toolu_1", "lookup_profile", { accountId: "a-1" }]]);
-    assert.ok(!(second instanceof Error), String(second));
-    assert.equal(second.text, "Account a-1 looks fine.");
+// A plain key, and a key that pi-ai would take for a Claude OAuth token if it were passed as pi-ai's apiKey.
+for (const apiKey of ["sk-custom", "sk-ant-oat01-custom"]) {
+  test(`the Anthropic-compatible model calls <base URL>/v1/messages with the key ${apiKey} as x-api-key, never ANTHROPIC_API_KEY`, async () => {
+    const saved = { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN };
+    process.env.ANTHROPIC_API_KEY = "sk-ant-from-environment";
+    process.env.ANTHROPIC_AUTH_TOKEN = "token-from-environment";
+    const endpoint = await streamingEndpoint((_body, requestNumber) => (requestNumber === 1 ? anthropicToolCallEvents : anthropicAnswerEvents));
+    try {
+      const baseUrl = endpoint.baseUrl.replace(/\/v1$/, "/anthropic");
+      const environment = { SIGNUP_AGENT_PI_BASE_URL: baseUrl, SIGNUP_AGENT_PI_PROTOCOL: "anthropic", SIGNUP_AGENT_PI_MODEL: "claude-compatible", SIGNUP_AGENT_PI_API_KEY: apiKey };
+      const { first, second } = await toolLoop(configuredPiModel(configOf(environment).piModel!));
+      assert.deepEqual(first.toolCalls.map((call) => [call.toolCallId, call.toolName, JSON.parse(call.arguments)]), [["toolu_1", "lookup_profile", { accountId: "a-1" }]]);
+      assert.ok(!(second instanceof Error), String(second));
+      assert.equal(second.text, "Account a-1 looks fine.");
 
-    assert.equal(endpoint.requests.length, 2);
-    for (const request of endpoint.requests) {
-      // pi-ai sends every Anthropic request through the SDK's beta Messages API, which adds ?beta=true.
-      assert.equal(request.url, "/anthropic/v1/messages?beta=true");
-      assert.equal(request.headers["x-api-key"], "sk-custom");
-      assert.equal(request.headers.authorization, undefined);
-      assert.equal(JSON.stringify(request.headers).includes("from-environment"), false);
-      assert.equal(request.body.model, "claude-compatible");
-      assert.equal(request.body.thinking, undefined);
-      assert.equal(JSON.stringify(request.body.tools).includes("eager_input_streaming"), false);
+      assert.equal(endpoint.requests.length, 2);
+      for (const request of endpoint.requests) {
+        // pi-ai sends every Anthropic request through the SDK's beta Messages API, which adds ?beta=true.
+        assert.equal(request.url, "/anthropic/v1/messages?beta=true");
+        assert.equal(request.headers["x-api-key"], apiKey);
+        assert.equal(request.headers.authorization, undefined);
+        assert.equal(JSON.stringify(request.headers).includes("from-environment"), false);
+        // No Claude Code identity and no OAuth betas, which pi-ai adds for an OAuth token.
+        assert.equal(request.headers["x-app"], undefined);
+        assert.equal(String(request.headers["user-agent"]).includes("claude-cli"), false);
+        assert.equal(/oauth-|claude-code-/.test(String(request.headers["anthropic-beta"] ?? "")), false);
+        assert.equal(request.body.model, "claude-compatible");
+        assert.equal(request.body.thinking, undefined);
+        assert.equal(JSON.stringify(request.body.tools).includes("eager_input_streaming"), false);
+      }
+      // The second request carries the signed thinking and the tool call back, then the tool result.
+      type Block = { type: string; id?: string; tool_use_id?: string; thinking?: string; signature?: string };
+      const messages = endpoint.requests[1]!.body.messages as { role: string; content: string | Block[] }[];
+      const blocksOf = (role: string) => messages.filter((message) => message.role === role && Array.isArray(message.content)).flatMap((message) => message.content as Block[]);
+      assert.deepEqual(
+        blocksOf("assistant").map((block) => (block.type === "thinking" ? { type: block.type, thinking: block.thinking, signature: block.signature } : { type: block.type, id: block.id })),
+        [
+          { type: "thinking", thinking: "Check the profile first.", signature: "sig-abc123" },
+          { type: "tool_use", id: "toolu_1" },
+        ],
+      );
+      assert.ok(blocksOf("user").some((block) => block.type === "tool_result" && block.tool_use_id === "toolu_1"));
+    } finally {
+      await endpoint.close();
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
     }
-    // The tool result goes back after the tool call it answers.
-    const messages = endpoint.requests[1]!.body.messages as { role: string; content: string | { type: string; id?: string; tool_use_id?: string }[] }[];
-    const hasBlock = (role: string, matches: (block: { type: string; id?: string; tool_use_id?: string }) => boolean) =>
-      messages.some((message) => message.role === role && Array.isArray(message.content) && message.content.some(matches));
-    assert.ok(hasBlock("assistant", (block) => block.type === "tool_use" && block.id === "toolu_1"));
-    assert.ok(hasBlock("user", (block) => block.type === "tool_result" && block.tool_use_id === "toolu_1"));
-  } finally {
-    await endpoint.close();
-    for (const [name, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-  }
-});
+  });
+}

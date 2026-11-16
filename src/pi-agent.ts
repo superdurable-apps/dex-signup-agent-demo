@@ -67,8 +67,8 @@ export function withoutReplayedThinking(context: Context): Context {
 
 /**
  * A model of an Anthropic-compatible Messages endpoint outside pi-ai's catalog; pi-ai's Anthropic client posts to
- * `<baseUrl>/v1/messages` with the key as `x-api-key`. Its provider is no catalog provider, so pi-ai reads no key and no
- * Anthropic credentials from the environment. It asks for no thinking. Tools go without `eager_input_streaming` (the
+ * `<baseUrl>/v1/messages`, and {@link configuredPiModel} sends the key as the `x-api-key` header. Its provider is no
+ * catalog provider, so pi-ai reads no key and no Anthropic credentials from the environment. It asks for no thinking. Tools go without `eager_input_streaming` (the
  * fine-grained streaming beta header instead), since a compatible endpoint may reject unknown tool fields, and no
  * one-hour cache retention. Any thinking the endpoint returns is replayed with its signature, as the Messages API
  * expects within a tool loop.
@@ -95,7 +95,9 @@ export function configuredPiModel(selection: PiModelSelection): ModelClient {
     case "openai-compatible":
       return createPiAiModelClient(openAICompatibleModel(selection.modelId, selection.baseUrl), { apiKey: selection.apiKey, prepareRequest: withoutReplayedThinking });
     case "anthropic-compatible":
-      return createPiAiModelClient(anthropicCompatibleModel(selection.modelId, selection.baseUrl), { apiKey: selection.apiKey });
+      // The key goes as the x-api-key header, not as pi-ai's apiKey: pi-ai treats an apiKey that contains `sk-ant-oat`
+      // as a Claude OAuth token and would send it as a Bearer token with Claude Code identity headers.
+      return createPiAiModelClient(anthropicCompatibleModel(selection.modelId, selection.baseUrl), { headers: { "x-api-key": selection.apiKey } });
     case "catalog":
       return piModel(selection.name, selection.apiKey);
   }
