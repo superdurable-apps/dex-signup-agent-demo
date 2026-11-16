@@ -12,7 +12,7 @@ import type { Client, Flow } from "@superdurable/dex";
 import { claudeCliEnvironment, claudeHarnessLabel, createClaudeSignupAgent } from "./claude-agent.ts";
 import { loadSignupAgentConfig, type SignupAgentConfig } from "./config.ts";
 import type { Route } from "./http.ts";
-import { createPiSignupAgent, piHarnessLabel, piModel } from "./pi-agent.ts";
+import { configuredPiModel, createPiSignupAgent, piHarnessLabel } from "./pi-agent.ts";
 import { PublicProfileSources, type ProfileSources } from "./profile-sources.ts";
 import { ReviewApiClient } from "./review-api.ts";
 import { createReviewReplyRunner, createReviewReplyTarget, reviewChannelOf, reviewSlackConnection } from "./review-replies.ts";
@@ -104,7 +104,7 @@ export async function loadApplication(options: ApplicationOptions): Promise<Appl
           cliEnvironment: claudeCliEnvironment(config.claudeAuthentication, environment),
           ...(config.claudeCliPath === undefined ? {} : { cliPath: config.claudeCliPath }),
         })
-      : createPiSignupAgent(services, options.model ?? piModel(config.piModel, config.anthropicApiKey));
+      : createPiSignupAgent(services, options.model ?? configuredPiModel(config.piModel!));
   return {
     flows: [sessionFlow],
     sessionFlow,

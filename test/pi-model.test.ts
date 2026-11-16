@@ -1,0 +1,227 @@
+// The pi model selection of the configuration, and the OpenAI-compatible model against a local streaming endpoint.
+
+import assert from "node:assert/strict";
+import { createServer, type IncomingHttpHeaders } from "node:http";
+import type { AddressInfo } from "node:net";
+import test from "node:test";
+
+import type { Context } from "@earendil-works/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
+import type { ModelClient, ModelInputItem, ModelRequest, ModelResponse } from "@superdurable/dex-agents/builtin-loop";
+import { createPiAiModelClient } from "@superdurable/dex-agents-pi";
+
+import { loadSignupAgentConfig } from "../src/config.ts";
+import { configuredPiModel, openAICompatibleMaxTokens, openAICompatibleModel } from "../src/pi-agent.ts";
+
+const baseEnvironment = {
+  REVIEW_API_URL: "https://review-api.example.invalid",
+  REVIEW_API_KEY: "srk_test_secret",
+  SIGNUP_REVIEW_SINCE: "2026-11-13T00:00:00Z",
+  SLACK_REVIEW_CHANNEL: "C0123456789",
+  SIGNUP_REVIEWER_SLACK_IDS: "U01",
+};
+const configOf = (environment: Record<string, string>) => loadSignupAgentConfig({ ...baseEnvironment, ...environment });
+
+test("the default pi model is Anthropic's and requires ANTHROPIC_API_KEY", () => {
+  assert.deepEqual(configOf({ ANTHROPIC_API_KEY: "sk-ant" }).piModel, { kind: "catalog", name: "anthropic/claude-opus-5-5", apiKey: "sk-ant" });
+  assert.throws(() => configOf({}), /ANTHROPIC_API_KEY is required/);
+  assert.throws(() => configOf({ SIGNUP_AGENT_PI_MODEL: "anthropic/claude-opus-5-5", ANTHROPIC_API_KEY: " " }), /ANTHROPIC_API_KEY is required/);
+});
+
+test("another catalog model needs no ANTHROPIC_API_KEY: pi-ai reads its provider's key from the environment", () => {
+  assert.deepEqual(configOf({ SIGNUP_AGENT_PI_MODEL: "openai/gpt-5" }).piModel, { kind: "catalog", name: "openai/gpt-5", apiKey: undefined });
+});
+
+test("openai-compatible/<model ID> selects the endpoint and its key, and needs no ANTHROPIC_API_KEY", () => {
+  const environment = { SIGNUP_AGENT_PI_MODEL: "openai-compatible/qwen3.8-flash-next", SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1", SIGNUP_AGENT_PI_API_KEY: "sk-qwen" };
+  assert.deepEqual(configOf(environment).piModel, { kind: "openai-compatible", modelId: "qwen3.8-flash-next", baseUrl: "https://llm.example.com/v1", apiKey: "sk-qwen" });
+  // A model ID may itself contain a slash.
+  assert.deepEqual(configOf({ ...environment, SIGNUP_AGENT_PI_MODEL: "openai-compatible/Qwen/Qwen3-8B" }).piModel, { kind: "openai-compatible", modelId: "Qwen/Qwen3-8B", baseUrl: "https://llm.example.com/v1", apiKey: "sk-qwen" });
+  assert.throws(() => configOf({ ...environment, SIGNUP_AGENT_PI_API_KEY: "" }), /SIGNUP_AGENT_PI_API_KEY is required/);
+  assert.throws(() => configOf({ ...environment, SIGNUP_AGENT_PI_BASE_URL: "" }), /SIGNUP_AGENT_PI_BASE_URL is required/);
+});
+
+test("SIGNUP_AGENT_PI_BASE_URL must be an http(s) base URL with a host, without a query, a fragment or /chat/completions", () => {
+  const environment = { SIGNUP_AGENT_PI_MODEL: "openai-compatible/qwen3.8-flash-next", SIGNUP_AGENT_PI_API_KEY: "sk-qwen" };
+  const baseUrlOf = (url: string) => (configOf({ ...environment, SIGNUP_AGENT_PI_BASE_URL: url }).piModel as { baseUrl: string }).baseUrl;
+  for (const valid of ["https://llm.example.com/v1", "http://127.0.0.1:8000/v1", "https://llm.example.com", "https://llm.example.com/compatible-mode/v1/"]) {
+    assert.equal(baseUrlOf(valid), valid);
+  }
+  const refusals: [string, RegExp][] = [
+    ["llm.example.com/v1", /is not a URL/],
+    ["https://?x", /is not a URL/],
+    ["https://#x", /is not a URL/],
+    ["https://host space/v1", /is not a URL/],
+    ["ftp://llm.example.com/v1", /must be an http\(s\) URL with a host/],
+    ["https://llm.example.com/v1?api-version=1", /must not have a query or a fragment/],
+    ["https://llm.example.com/v1?", /must not have a query or a fragment/],
+    ["https://llm.example.com/v1#models", /must not have a query or a fragment/],
+    ["https://llm.example.com/v1/chat/completions", /must not end in \/chat\/completions/],
+    ["https://llm.example.com/v1/chat/completions/", /must not end in \/chat\/completions/],
+  ];
+  for (const [url, error] of refusals) {
+    assert.throws(() => baseUrlOf(url), (thrown: Error) => error.test(thrown.message) && /give the base URL only/.test(thrown.message), url);
+  }
+});
+
+test("a base URL without the openai-compatible model, or a model without a provider, is refused", () => {
+  assert.throws(() => configOf({ ANTHROPIC_API_KEY: "sk-ant", SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1" }), /SIGNUP_AGENT_PI_BASE_URL is set/);
+  assert.throws(() => configOf({ SIGNUP_AGENT_PI_MODEL: "qwen3.8-flash-next" }), /must be <provider>\/<model ID>/);
+  assert.throws(() => configOf({ SIGNUP_AGENT_PI_MODEL: "openai-compatible/" }), /must be <provider>\/<model ID>/);
+});
+
+test("the Claude Agent SDK harness has no pi model and requires no model key", () => {
+  const config = configOf({ SIGNUP_AGENT_HARNESS: "claude-agent-sdk" });
+  assert.equal(config.piModel, undefined);
+});
+
+test("configuredPiModel builds a client for a catalog model and for an OpenAI-compatible one", () => {
+  assert.ok(configuredPiModel({ kind: "catalog", name: "anthropic/claude-opus-5-5", apiKey: "sk-ant" }));
+  assert.ok(configuredPiModel({ kind: "openai-compatible", modelId: "qwen3.8-flash-next", baseUrl: "https://llm.example.com/v1", apiKey: "sk-qwen" }));
+  assert.throws(() => configuredPiModel({ kind: "catalog", name: "anthropic/no-such-model", apiKey: "sk-ant" }), /not in pi-ai's catalog/);
+});
+
+interface CapturedRequest {
+  readonly url: string | undefined;
+  readonly headers: IncomingHttpHeaders;
+  readonly body: Record<string, any>;
+}
+
+/**
+ * A Chat Completions endpoint that records each request and streams the chunks the responder gives for it, or answers
+ * 400 when the responder gives none.
+ */
+async function streamingEndpoint(respond: (body: string, requestNumber: number) => readonly object[] | undefined) {
+  const requests: CapturedRequest[] = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (piece) => (body += piece));
+    request.on("end", () => {
+      requests.push({ url: request.url, headers: request.headers, body: JSON.parse(body) });
+      const chunks = respond(body, requests.length);
+      if (chunks === undefined) {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "unknown field reasoning_content", type: "invalid_request_error" } }));
+        return;
+      }
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      for (const chunk of chunks) {
+        response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+      }
+      response.end("data: [DONE]\n\n");
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, requests, close: () => new Promise((resolve) => server.close(resolve)) };
+}
+
+const chunk = (delta: object, finishReason: string | null = null) => ({
+  id: "chatcmpl-1",
+  object: "chat.completion.chunk",
+  model: "qwen3.8-flash-next",
+  choices: [{ index: 0, delta, finish_reason: finishReason }],
+});
+
+/** Tool-call deltas as the endpoint sends them: `"type":"function"` on every delta, the arguments split across them. */
+const toolCallChunks = (repeatIdAndName: boolean) => [
+  chunk({ role: "assistant", reasoning_content: "Check the " }),
+  chunk({ reasoning_content: "profile first." }),
+  chunk({ tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "lookup_profile", arguments: "" } }] }),
+  ...['{"account', 'Id":"a-1"', "}"].map((piece) =>
+    chunk({ tool_calls: [{ index: 0, type: "function", ...(repeatIdAndName ? { id: "call_1" } : {}), function: { ...(repeatIdAndName ? { name: "lookup_profile" } : {}), arguments: piece } }] }),
+  ),
+  chunk({}, "tool_calls"),
+  { id: "chatcmpl-1", object: "chat.completion.chunk", model: "qwen3.8-flash-next", choices: [], usage: { prompt_tokens: 40, completion_tokens: 12, total_tokens: 52 } },
+];
+
+const context: Context = {
+  systemPrompt: "You review sign-ups.",
+  messages: [{ role: "user", content: "Review account a-1.", timestamp: Date.now() }],
+  tools: [{ name: "lookup_profile", description: "Looks up a profile.", parameters: { type: "object", properties: { accountId: { type: "string" } }, required: ["accountId"] } as any }],
+};
+
+for (const repeatIdAndName of [false, true]) {
+  test(`pi-ai reads reasoning_content and tool-call deltas that repeat "type":"function"${repeatIdAndName ? ", the id and the name" : ""}`, async () => {
+    const endpoint = await streamingEndpoint(() => toolCallChunks(repeatIdAndName));
+    try {
+      const message = await streamSimple(openAICompatibleModel("qwen3.8-flash-next", endpoint.baseUrl), context, { apiKey: "sk-qwen", maxRetries: 0 }).result();
+      assert.equal(message.stopReason, "toolUse", message.errorMessage);
+      const thinking = message.content.filter((block) => block.type === "thinking");
+      assert.deepEqual(thinking.map((block) => block.thinking), ["Check the profile first."]);
+      const toolCalls = message.content.filter((block) => block.type === "toolCall");
+      assert.equal(toolCalls.length, 1);
+      assert.deepEqual({ id: toolCalls[0]!.id, name: toolCalls[0]!.name, arguments: toolCalls[0]!.arguments }, { id: "call_1", name: "lookup_profile", arguments: { accountId: "a-1" } });
+      assert.equal(message.content.some((block) => block.type === "text"), false);
+
+      const [request] = endpoint.requests;
+      assert.equal(endpoint.requests.length, 1);
+      assert.equal(request!.url, "/v1/chat/completions");
+      assert.equal(request!.headers.authorization, "Bearer sk-qwen");
+      assert.equal(request!.body.model, "qwen3.8-flash-next");
+      assert.equal(request!.body.messages[0].role, "system");
+      assert.equal(typeof request!.body.max_tokens, "number");
+      assert.ok(request!.body.max_tokens <= openAICompatibleMaxTokens);
+      for (const absent of ["store", "max_completion_tokens", "reasoning_effort", "enable_thinking"]) {
+        assert.equal(request!.body[absent], undefined, absent);
+      }
+    } finally {
+      await endpoint.close();
+    }
+  });
+}
+
+const modelRequest = (inputItems: readonly ModelInputItem[], attempt: number): ModelRequest => ({
+  instructions: "You review sign-ups.",
+  inputItems,
+  tools: [{ name: "lookup_profile", description: "Looks up a profile.", parameters: { type: "object", properties: { accountId: { type: "string" } }, required: ["accountId"] } }],
+  toolChoice: "auto",
+  settings: {},
+  metadata: { flowId: "signup-review-a-1", turnId: "turn-1", stepExecutionId: `step-${attempt}`, attempt: 1 },
+  cancellationSignal: new AbortController().signal,
+});
+const discard = { writeTextDelta: () => {}, writeReasoningDelta: () => {} };
+const answerChunks = [chunk({ role: "assistant", content: "Account a-1 looks fine." }), chunk({}, "stop")];
+
+/** One tool loop: the first call streams thinking and a tool call, the second sends the tool result back. */
+async function toolLoop(client: ModelClient): Promise<{ first: ModelResponse; second: ModelResponse | Error }> {
+  const user: ModelInputItem = { type: "user_text", text: "Review account a-1." };
+  const first = await client.callModel(modelRequest([user], 1), discard);
+  assert.deepEqual(first.toolCalls.map((call) => call.toolName), ["lookup_profile"]);
+  const result: ModelInputItem = { type: "tool_result", toolCallId: first.toolCalls[0]!.toolCallId, toolName: "lookup_profile", output: '{"github":"octocat"}' };
+  try {
+    return { first, second: await client.callModel(modelRequest([user, ...first.outputItems, result], 2), discard) };
+  } catch (error) {
+    return { first, second: error as Error };
+  }
+}
+
+test("the OpenAI-compatible model leaves earlier thinking out of the request that returns the tool result", async () => {
+  // The endpoint rejects any request that carries reasoning_content, as some OpenAI-compatible endpoints do.
+  const respond = (body: string, requestNumber: number) => (body.includes("reasoning_content") ? undefined : requestNumber === 1 ? toolCallChunks(false) : answerChunks);
+  const endpoint = await streamingEndpoint(respond);
+  try {
+    const { first, second } = await toolLoop(configuredPiModel({ kind: "openai-compatible", modelId: "qwen3.8-flash-next", baseUrl: endpoint.baseUrl, apiKey: "sk-qwen" }));
+    // The session still stores the thinking; only the request leaves it out.
+    assert.ok(first.outputItems.some((item) => item.item.includes("Check the profile first.")));
+    assert.ok(!(second instanceof Error), String(second));
+    assert.equal(second.text, "Account a-1 looks fine.");
+    const followUp = endpoint.requests[1]!.body;
+    assert.equal(JSON.stringify(followUp).includes("reasoning_content"), false);
+    const assistant = followUp.messages.find((message: { role: string }) => message.role === "assistant");
+    assert.deepEqual(assistant.tool_calls.map((call: { id: string; function: { name: string; arguments: string } }) => [call.id, call.function.name, JSON.parse(call.function.arguments)]), [["call_1", "lookup_profile", { accountId: "a-1" }]]);
+    const tool = followUp.messages.find((message: { role: string }) => message.role === "tool");
+    assert.deepEqual([tool.tool_call_id, tool.content], ["call_1", '{"github":"octocat"}']);
+  } finally {
+    await endpoint.close();
+  }
+
+  // Without the hook, pi-ai replays the thinking and the same endpoint rejects the follow-up.
+  const control = await streamingEndpoint(respond);
+  try {
+    const { second } = await toolLoop(createPiAiModelClient(openAICompatibleModel("qwen3.8-flash-next", control.baseUrl), { apiKey: "sk-qwen" }));
+    assert.ok(second instanceof Error);
+    assert.ok(JSON.stringify(control.requests[1]!.body).includes("reasoning_content"));
+  } finally {
+    await control.close();
+  }
+});

@@ -33,8 +33,10 @@ platform contract: `npm run build` writes `dist/`, `node . web` serves `/api/hea
 ## Configuration
 
 - Hosted, the application environment comes from the Project configuration (`dex-app.yaml`
-  `application.environment`): `REVIEW_API_URL`, the secret `REVIEW_API_KEY`, the secret `ANTHROPIC_API_KEY`,
-  `SIGNUP_REVIEW_SINCE`, and the optional ones. It is applied to a copy of the process environment, never to
+  `application.environment`): `REVIEW_API_URL`, the secret `REVIEW_API_KEY`, `SIGNUP_REVIEW_SINCE`, the model, and
+  the optional ones. The model is the secret `ANTHROPIC_API_KEY` for an `anthropic/…` `SIGNUP_AGENT_PI_MODEL` (the
+  default), or `openai-compatible/<model ID>` with `SIGNUP_AGENT_PI_BASE_URL` and the secret `SIGNUP_AGENT_PI_API_KEY`;
+  `src/config.ts` requires whichever the model needs. It is applied to a copy of the process environment, never to
   `process.env`. The review channel and the reviewers come only from the `signup-review-reply` binding's
   configuration, which the user fills in Studio Setup.
 - Locally, `.env` sets everything, including `SLACK_REVIEW_CHANNEL` and `SIGNUP_REVIEWER_SLACK_IDS`.
