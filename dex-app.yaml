@@ -1,81 +1,62 @@
-{
-  "schemaVersion": "superverse.dev/dex-app/v1",
-  "application": {
-    "port": 8080,
-    "healthPath": "/api/health",
-    "workerSlots": 16,
-    "environment": [
-      {
-        "name": "REVIEW_API_URL",
-        "required": true,
-        "minLength": 1
-      },
-      {
-        "name": "REVIEW_API_KEY",
-        "required": true,
-        "secret": true,
-        "minLength": 1
-      },
-      {
-        "name": "ANTHROPIC_API_KEY",
-        "secret": true
-      },
-      {
-        "name": "SIGNUP_REVIEW_SINCE",
-        "required": true,
-        "minLength": 20
-      },
-      {
-        "name": "SIGNUP_AGENT_HARNESS",
-        "enum": ["pi"]
-      },
-      {
-        "name": "SIGNUP_AGENT_PI_MODEL"
-      },
-      {
-        "name": "SIGNUP_AGENT_PI_BASE_URL"
-      },
-      {
-        "name": "SIGNUP_AGENT_PI_PROTOCOL",
-        "enum": ["openai", "anthropic"]
-      },
-      {
-        "name": "SIGNUP_AGENT_PI_API_KEY",
-        "secret": true
-      },
-      {
-        "name": "SIGNUP_WATCH_INTERVAL_SECONDS"
-      },
-      {
-        "name": "GITHUB_TOKEN",
-        "secret": true
-      }
-    ]
-  },
-  "flowDefinitions": [
-    {
-      "sourcePath": "flow-definitions/signup-review-pi-agent.json"
-    }
-  ],
-  "connectors": [
-    {
-      "connectionName": "review-slack",
-      "connectorId": "slack",
-      "package": "@superdurable/connector-slack",
-      "version": "0.7.0",
-      "authMethodId": "",
-      "operations": ["postChannelMessage", "postThreadReply"],
-      "triggerBindings": [
-        {"triggerName": "threadReplyCreated", "bindingName": "signup-review-reply"}
-      ]
-    },
-    {
-      "connectionName": "welcome-gmail",
-      "connectorId": "gmail",
-      "package": "@superdurable/connector-google-gmail",
-      "version": "0.3.0",
-      "authMethodId": "google-oauth",
-      "operations": ["sendMessage"]
-    }
-  ]
-}
+# The Superverse application manifest, strict YAML: no anchors, aliases, tags or
+# repeated keys. Quote every value that YAML 1.1 and 1.2 read differently, such
+# as a dotted version ("0.7.0"), yes/no/on/off or a leading zero.
+# tools/appmanifest is the platform's decoder: it prints this file as the JSON
+# that make check-fdg-v2 checks.
+schemaVersion: superverse.dev/dex-app/v1
+application:
+  port: 8080
+  healthPath: /api/health
+  # Hosted Worker slots (1 to 64); a review that waits for a reply holds none.
+  workerSlots: 16
+  # Set in Setup; docs/superverse.md and docs/reference.md describe each one.
+  environment:
+    - name: REVIEW_API_URL
+      required: true
+      minLength: 1
+    - name: REVIEW_API_KEY
+      required: true
+      secret: true
+      minLength: 1
+    # The key for an anthropic/... SIGNUP_AGENT_PI_MODEL, the default model.
+    - name: ANTHROPIC_API_KEY
+      secret: true
+    # An RFC 3339 time: only sign-ups registered since then are reviewed.
+    - name: SIGNUP_REVIEW_SINCE
+      required: true
+      minLength: 20
+    # Only the pi harness runs hosted.
+    - name: SIGNUP_AGENT_HARNESS
+      enum: [pi]
+    - name: SIGNUP_AGENT_PI_MODEL
+    # An OpenAI- or Anthropic-compatible endpoint instead of Anthropic's API.
+    - name: SIGNUP_AGENT_PI_BASE_URL
+    - name: SIGNUP_AGENT_PI_PROTOCOL
+      enum: [openai, anthropic]
+    - name: SIGNUP_AGENT_PI_API_KEY
+      secret: true
+    - name: SIGNUP_WATCH_INTERVAL_SECONDS
+    - name: GITHUB_TOKEN
+      secret: true
+# The committed pi session graph; make session-graphs writes it.
+flowDefinitions:
+  - sourcePath: flow-definitions/signup-review-pi-agent.json
+# Each package and version must equal the one package.json pins.
+connectors:
+  - connectionName: review-slack
+    connectorId: slack
+    package: "@superdurable/connector-slack"
+    version: "0.7.0"
+    authMethodId: ""
+    operations: [postChannelMessage, postThreadReply]
+    # Must match scripts/session-trigger-bindings.json and the session graphs'
+    # v2.connectorTriggerBindings; make check-fdg-v2 compares them.
+    triggerBindings:
+      - triggerName: threadReplyCreated
+        bindingName: signup-review-reply
+  - connectionName: welcome-gmail
+    connectorId: gmail
+    package: "@superdurable/connector-google-gmail"
+    version: "0.3.0"
+    authMethodId: google-oauth
+    operations: [sendMessage]

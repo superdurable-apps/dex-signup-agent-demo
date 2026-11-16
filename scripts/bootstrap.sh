@@ -23,6 +23,10 @@ for name in sys.argv[1:]:
 print(digest.hexdigest())' "$@"
 }
 
+# tools/appmanifest reads dex-app.yaml for make check-fdg-v2 with the
+# platform's own decoder, a Go module; a current module cache answers at once.
+GOWORK=off go -C tools/appmanifest mod download
+
 # node_modules lives in the workspace, so it is restored again only when the
 # lockfile changed or the installation is missing.
 stamp=".local/bootstrap.sha256"

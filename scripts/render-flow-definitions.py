@@ -35,6 +35,16 @@ SESSION_TRIGGER_BINDINGS = "scripts/session-trigger-bindings.json"
 GRAPH_DIRECTORY = ROOT / "flow-definitions"
 
 
+def read_manifest() -> dict[str, object]:
+    """dex-app.yaml as the canonical JSON that the platform reads: Python has no
+    YAML parser, so tools/appmanifest, the platform's own decoder in Go, converts it."""
+    result = subprocess.run(["go", "run", "-C", "tools/appmanifest", ".", "../../dex-app.yaml"], cwd=ROOT, check=False,
+                            capture_output=True, text=True, env={**os.environ, "GOWORK": "off"})
+    if result.returncode != 0:
+        raise SystemExit(result.stderr.strip() or "dex-app.yaml could not be read; install Go and run make bootstrap first")
+    return json.loads(result.stdout)
+
+
 def blocking_diagnostics(graph):
     return [d for d in graph.get("diagnostics") or []
             if not (d.get("severity") == "warning" and d.get("code") in ADVISORY_DIAGNOSTICS)]
@@ -45,10 +55,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, help="write the rendered definitions as JSON")
     parser.add_argument("--dexcli", default=os.environ.get("DEXCLI", "dexcli"))
     arguments = parser.parse_args()
-    try:
-        manifest = json.loads((ROOT / "dex-app.yaml").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as failure:
-        raise SystemExit("dex-app.yaml must contain valid JSON-compatible YAML") from failure
+    manifest = read_manifest()
     # Adapted from the base, which refuses every connector: a TypeScript connector names its npm package and the exact
     # version package.json pins (the platform's PGTSCONN shape).
     dependencies = json.loads((ROOT / "package.json").read_text(encoding="utf-8")).get("dependencies") or {}
@@ -62,7 +69,7 @@ def main() -> None:
     expected_bindings = trigger_bindings_of(manifest)
     entries = manifest.get("flowDefinitions") or []
     if not entries or any(not isinstance(entry, dict) for entry in entries):
-        raise SystemExit("dex-app.yaml must list each Flow source as {\"sourcePath\": ...} in flowDefinitions")
+        raise SystemExit("dex-app.yaml must list each Flow source as an item \"- sourcePath: <path>\" of flowDefinitions")
     definitions = sorted((render(entry.get("sourcePath"), arguments.dexcli, expected_bindings) for entry in entries),
                          key=lambda definition: definition["flowType"])
     # The local Worker uploads every graph of flow-definitions, also those of harnesses the platform does not run.

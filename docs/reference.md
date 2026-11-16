@@ -69,12 +69,18 @@ a message that says what to set.
 | `npm run build` | Compiles `src/` to `dist/` |
 | `npm run typecheck` | Type-checks sources and tests |
 | `npm test` / `make test` | The scenario suite of both harnesses (`test/`) |
-| `make bootstrap` | Restores `node_modules` from `package-lock.json` (`npm ci --ignore-scripts`), only when the lockfile changed |
-| `make check-fdg-v2` | Checks the committed session graph and the connector entries of `dex-app.yaml` (see [superverse.md](superverse.md#session-graphs)) |
+| `make bootstrap` | Downloads the Go module of `tools/appmanifest`, then restores `node_modules` from `package-lock.json` (`npm ci --ignore-scripts`), only when the lockfile changed |
+| `make check-fdg-v2` | Reads `dex-app.yaml` through `tools/appmanifest`, then checks the committed session graph and the connector entries (see [superverse.md](superverse.md#session-graphs)) |
 | `make check-static` | `check-fdg-v2`, then the type check and the build |
 | `make test-app [RUN=<regexp>]` | The app tests (`apptest/`), optionally selected by name |
 | `make session-graphs` | Writes both harnesses' session graphs with the reply Trigger binding |
 | `node . web`, `node . worker` | The two hosted processes; `node .` with no mode is the local process |
+
+`make bootstrap`, `make check-fdg-v2` and `make check-static` need Go, the version of
+[`tools/appmanifest/go.mod`](../tools/appmanifest/go.mod) or later. Python has no YAML parser, so
+`scripts/render-flow-definitions.py` reads `dex-app.yaml` only through `tools/appmanifest`, the platform's own
+decoder: `go run -C tools/appmanifest . ../../dex-app.yaml` prints the canonical JSON the platform reads. `npm start`,
+`npm test`, `make test-app` and `make session-graphs` do not read the manifest and need no Go.
 
 ## Files
 
@@ -92,7 +98,8 @@ a message that says what to set.
 | [`src/main.ts`](../src/main.ts), [`src/runtime.ts`](../src/runtime.ts), [`src/http.ts`](../src/http.ts), [`src/dex.ts`](../src/dex.ts) | The process entry, the hosted runtime settings, the HTTP server and the Dex connection |
 | [`flow-definitions/`](../flow-definitions) | The committed session graphs of both harnesses |
 | [`scripts/`](../scripts) | `bootstrap.sh`, `render-flow-definitions.py` (behind `check-fdg-v2`) and the binding's Setup units |
-| [`dex-app.yaml`](../dex-app.yaml), [`.superverse/template.json`](../.superverse/template.json), [`openapi/openapi.yaml`](../openapi/openapi.yaml) | The Superverse application manifest, template and HTTP API |
+| [`dex-app.yaml`](../dex-app.yaml), [`.superverse/template.json`](../.superverse/template.json), [`openapi/openapi.yaml`](../openapi/openapi.yaml) | The Superverse application manifest (strict YAML, see [superverse.md](superverse.md#connect-a-repository)), template and HTTP API |
+| [`tools/appmanifest/`](../tools/appmanifest) | The platform's `dex-app.yaml` decoder (MIT, a Go module of its own), copied unchanged from the Superverse TypeScript template; do not edit it |
 | [`apptest/`](../apptest), [`test/`](../test) | The app tests and the scenario and unit tests |
 
 ## Tests
