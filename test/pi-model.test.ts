@@ -145,7 +145,9 @@ async function streamingEndpoint(respond: (body: string, requestNumber: number) 
       }
       response.writeHead(200, { "content-type": "text/event-stream" });
       for (const chunk of chunks) {
-        response.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        // Anthropic events name themselves in an `event:` line; Chat Completions chunks have none.
+        const event = (chunk as { type?: unknown }).type;
+        response.write(`${typeof event === "string" ? `event: ${event}\n` : ""}data: ${JSON.stringify(chunk)}\n\n`);
       }
       response.end("data: [DONE]\n\n");
     });
@@ -262,5 +264,87 @@ test("the OpenAI-compatible model leaves earlier thinking out of the request tha
     assert.ok(JSON.stringify(control.requests[1]!.body).includes("reasoning_content"));
   } finally {
     await control.close();
+  }
+});
+
+test("SIGNUP_AGENT_PI_PROTOCOL picks the custom endpoint's API, openai by default", () => {
+  const endpoint = { SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1", SIGNUP_AGENT_PI_API_KEY: "sk-custom", SIGNUP_AGENT_PI_MODEL: "qwen3.8-flash-next" };
+  const openai = { kind: "openai-compatible", modelId: "qwen3.8-flash-next", baseUrl: "https://llm.example.com/v1", apiKey: "sk-custom" };
+  assert.deepEqual(configOf(endpoint).piModel, openai);
+  assert.deepEqual(configOf({ ...endpoint, SIGNUP_AGENT_PI_PROTOCOL: "" }).piModel, openai);
+  assert.deepEqual(configOf({ ...endpoint, SIGNUP_AGENT_PI_PROTOCOL: "openai" }).piModel, openai);
+  const anthropic = { ...endpoint, SIGNUP_AGENT_PI_PROTOCOL: "anthropic", SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/anthropic" };
+  assert.deepEqual(configOf(anthropic).piModel, { kind: "anthropic-compatible", modelId: "qwen3.8-flash-next", baseUrl: "https://llm.example.com/anthropic", apiKey: "sk-custom" });
+  // With the anthropic protocol chosen, a catalog-like prefix is part of the endpoint's model ID.
+  assert.deepEqual(configOf({ ...anthropic, SIGNUP_AGENT_PI_MODEL: "anthropic/claude-sonnet" }).piModel, { kind: "anthropic-compatible", modelId: "anthropic/claude-sonnet", baseUrl: "https://llm.example.com/anthropic", apiKey: "sk-custom" });
+
+  const refusals: [Record<string, string>, RegExp][] = [
+    [{ SIGNUP_AGENT_PI_PROTOCOL: "openai", ANTHROPIC_API_KEY: "sk-ant" }, /SIGNUP_AGENT_PI_PROTOCOL applies only to a custom endpoint: set SIGNUP_AGENT_PI_BASE_URL/],
+    [{ SIGNUP_AGENT_PI_PROTOCOL: "anthropic", ANTHROPIC_API_KEY: "sk-ant" }, /SIGNUP_AGENT_PI_PROTOCOL applies only to a custom endpoint/],
+    [{ ...endpoint, SIGNUP_AGENT_PI_PROTOCOL: "gemini" }, /SIGNUP_AGENT_PI_PROTOCOL must be openai or anthropic/],
+    [{ ...endpoint, SIGNUP_AGENT_PI_PROTOCOL: "Anthropic" }, /SIGNUP_AGENT_PI_PROTOCOL must be openai or anthropic/],
+    [{ ...anthropic, SIGNUP_AGENT_PI_MODEL: "openai-compatible/qwen3.8-flash-next" }, /is the OpenAI-compatible form, but SIGNUP_AGENT_PI_PROTOCOL is anthropic/],
+    [{ ...anthropic, SIGNUP_AGENT_PI_API_KEY: "" }, /SIGNUP_AGENT_PI_API_KEY is required/],
+    [{ ...anthropic, SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/anthropic/v1/messages" }, /must not end in \/messages: with SIGNUP_AGENT_PI_PROTOCOL=anthropic the client appends \/v1\/messages/],
+  ];
+  for (const [environment, error] of refusals) {
+    assert.throws(() => configOf(environment), error, JSON.stringify(environment));
+  }
+});
+
+/** Anthropic Messages stream events: a tool call whose input arrives in pieces, or a text answer. */
+const anthropicToolCallEvents = [
+  { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude-compatible", content: [], stop_reason: null, usage: { input_tokens: 40, output_tokens: 1 } } },
+  { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "lookup_profile", input: {} } },
+  ...['{"account', 'Id":"a-1"', "}"].map((piece) => ({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: piece } })),
+  { type: "content_block_stop", index: 0 },
+  { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 12 } },
+  { type: "message_stop" },
+];
+const anthropicAnswerEvents = [
+  { type: "message_start", message: { id: "msg_2", type: "message", role: "assistant", model: "claude-compatible", content: [], stop_reason: null, usage: { input_tokens: 60, output_tokens: 1 } } },
+  { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+  { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Account a-1 looks fine." } },
+  { type: "content_block_stop", index: 0 },
+  { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 6 } },
+  { type: "message_stop" },
+];
+
+test("the Anthropic-compatible model calls <base URL>/v1/messages with SIGNUP_AGENT_PI_API_KEY, never ANTHROPIC_API_KEY", async () => {
+  const saved = { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN };
+  process.env.ANTHROPIC_API_KEY = "sk-ant-from-environment";
+  process.env.ANTHROPIC_AUTH_TOKEN = "token-from-environment";
+  const endpoint = await streamingEndpoint((_body, requestNumber) => (requestNumber === 1 ? anthropicToolCallEvents : anthropicAnswerEvents));
+  try {
+    const baseUrl = endpoint.baseUrl.replace(/\/v1$/, "/anthropic");
+    const environment = { SIGNUP_AGENT_PI_BASE_URL: baseUrl, SIGNUP_AGENT_PI_PROTOCOL: "anthropic", SIGNUP_AGENT_PI_MODEL: "claude-compatible", SIGNUP_AGENT_PI_API_KEY: "sk-custom" };
+    const { first, second } = await toolLoop(configuredPiModel(configOf(environment).piModel!));
+    assert.deepEqual(first.toolCalls.map((call) => [call.toolCallId, call.toolName, JSON.parse(call.arguments)]), [["toolu_1", "lookup_profile", { accountId: "a-1" }]]);
+    assert.ok(!(second instanceof Error), String(second));
+    assert.equal(second.text, "Account a-1 looks fine.");
+
+    assert.equal(endpoint.requests.length, 2);
+    for (const request of endpoint.requests) {
+      // pi-ai sends every Anthropic request through the SDK's beta Messages API, which adds ?beta=true.
+      assert.equal(request.url, "/anthropic/v1/messages?beta=true");
+      assert.equal(request.headers["x-api-key"], "sk-custom");
+      assert.equal(request.headers.authorization, undefined);
+      assert.equal(JSON.stringify(request.headers).includes("from-environment"), false);
+      assert.equal(request.body.model, "claude-compatible");
+      assert.equal(request.body.thinking, undefined);
+      assert.equal(JSON.stringify(request.body.tools).includes("eager_input_streaming"), false);
+    }
+    // The tool result goes back after the tool call it answers.
+    const messages = endpoint.requests[1]!.body.messages as { role: string; content: string | { type: string; id?: string; tool_use_id?: string }[] }[];
+    const hasBlock = (role: string, matches: (block: { type: string; id?: string; tool_use_id?: string }) => boolean) =>
+      messages.some((message) => message.role === role && Array.isArray(message.content) && message.content.some(matches));
+    assert.ok(hasBlock("assistant", (block) => block.type === "tool_use" && block.id === "toolu_1"));
+    assert.ok(hasBlock("user", (block) => block.type === "tool_result" && block.tool_use_id === "toolu_1"));
+  } finally {
+    await endpoint.close();
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 });

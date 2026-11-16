@@ -36,6 +36,10 @@
         "name": "SIGNUP_AGENT_PI_BASE_URL"
       },
       {
+        "name": "SIGNUP_AGENT_PI_PROTOCOL",
+        "enum": ["openai", "anthropic"]
+      },
+      {
         "name": "SIGNUP_AGENT_PI_API_KEY",
         "secret": true
       },

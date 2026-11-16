@@ -32,18 +32,33 @@ export interface SignupAgentConfig {
  * `openai-compatible/<model ID>`, still accepted with SIGNUP_AGENT_PI_BASE_URL.
  */
 export const openAICompatibleProvider = "openai-compatible";
+/** The provider of an Anthropic-compatible model outside pi-ai's catalog, so pi-ai never applies its `anthropic` defaults. */
+export const anthropicCompatibleProvider = "anthropic-compatible";
+
+/** SIGNUP_AGENT_PI_PROTOCOL: the API of the endpoint at SIGNUP_AGENT_PI_BASE_URL. */
+export const piEndpointProtocols = ["openai", "anthropic"] as const;
+export type PiEndpointProtocol = (typeof piEndpointProtocols)[number];
 
 /**
  * The pi model: `<provider>/<model ID>` of pi-ai's catalog with an optional key (without one pi-ai reads the
- * provider's key from the process environment), or an OpenAI-compatible Chat Completions endpoint with its key.
+ * provider's key from the process environment), or a custom endpoint with its key: OpenAI-compatible Chat Completions
+ * or Anthropic-compatible Messages.
  */
 export type PiModelSelection =
   | { readonly kind: "catalog"; readonly name: string; readonly apiKey: string | undefined }
-  | { readonly kind: "openai-compatible"; readonly modelId: string; readonly baseUrl: string; readonly apiKey: string };
+  | { readonly kind: "openai-compatible"; readonly modelId: string; readonly baseUrl: string; readonly apiKey: string }
+  | { readonly kind: "anthropic-compatible"; readonly modelId: string; readonly baseUrl: string; readonly apiKey: string };
 
-/** SIGNUP_AGENT_PI_BASE_URL: an http(s) URL with a host and no query or fragment, before `/chat/completions`. */
-function openAICompatibleBaseUrl(value: string): string {
-  const invalid = (reason: string) => new Error(`SIGNUP_AGENT_PI_BASE_URL ${reason}; give the base URL only, such as https://llm.example.com/v1`);
+/** The path the client appends to the base URL of each protocol. */
+const endpointPaths: Record<PiEndpointProtocol, { readonly path: string; readonly suffix: RegExp; readonly example: string }> = {
+  openai: { path: "/chat/completions", suffix: /\/chat\/completions\/?$/, example: "https://llm.example.com/v1" },
+  anthropic: { path: "/v1/messages", suffix: /\/messages\/?$/, example: "https://llm.example.com/anthropic" },
+};
+
+/** SIGNUP_AGENT_PI_BASE_URL: an http(s) URL with a host and no query or fragment, before the protocol's path. */
+function endpointBaseUrl(value: string, protocol: PiEndpointProtocol): string {
+  const { path, suffix, example } = endpointPaths[protocol];
+  const invalid = (reason: string) => new Error(`SIGNUP_AGENT_PI_BASE_URL ${reason}; give the base URL only, such as ${example}`);
   let url: URL;
   try {
     url = new URL(value);
@@ -56,8 +71,8 @@ function openAICompatibleBaseUrl(value: string): string {
   if (url.search !== "" || url.hash !== "" || value.includes("?") || value.includes("#")) {
     throw invalid("must not have a query or a fragment");
   }
-  if (/\/chat\/completions\/?$/.test(url.pathname)) {
-    throw invalid("must not end in /chat/completions, which pi-ai appends");
+  if (suffix.test(url.pathname)) {
+    throw invalid(`must not end in ${path.replace(/^\/v1/, "")}: with SIGNUP_AGENT_PI_PROTOCOL=${protocol} the client appends ${path}`);
   }
   return value;
 }
@@ -69,24 +84,40 @@ function catalogProviderOf(name: string): BuiltinProvider | undefined {
 }
 
 /**
- * The pi model of SIGNUP_AGENT_PI_MODEL and SIGNUP_AGENT_PI_BASE_URL:
- * - With SIGNUP_AGENT_PI_BASE_URL, the endpoint is OpenAI-compatible and SIGNUP_AGENT_PI_MODEL is required: the
- *   endpoint's model ID as it is, slashes included (`qwen3.8-flash-next`, `meta-llama/Llama-3`), or the legacy
- *   `openai-compatible/<model ID>`. A value that starts with a pi-ai catalog provider, such as `anthropic/…`, is
- *   refused as ambiguous; an endpoint model ID that really starts with one is written `openai-compatible/<model ID>`.
- *   SIGNUP_AGENT_PI_API_KEY is required.
+ * The pi model of SIGNUP_AGENT_PI_MODEL, SIGNUP_AGENT_PI_BASE_URL and SIGNUP_AGENT_PI_PROTOCOL:
+ * - With SIGNUP_AGENT_PI_BASE_URL, the endpoint is custom, SIGNUP_AGENT_PI_API_KEY is required and
+ *   SIGNUP_AGENT_PI_PROTOCOL picks its API, `openai` (the default) or `anthropic`. SIGNUP_AGENT_PI_MODEL is required.
+ *   - `openai`: the endpoint's model ID as it is, slashes included (`qwen3.8-flash-next`, `meta-llama/Llama-3`), or
+ *     the legacy `openai-compatible/<model ID>`. A value that starts with a pi-ai catalog provider, such as
+ *     `anthropic/…`, is refused as ambiguous; an endpoint model ID that really starts with one is written
+ *     `openai-compatible/<model ID>`.
+ *   - `anthropic`: the endpoint's model ID as it is; the protocol was chosen explicitly, so no prefix is ambiguous.
+ *     The legacy `openai-compatible/` prefix names the other protocol and is refused.
  * - Without it, SIGNUP_AGENT_PI_MODEL is `<provider>/<model ID>` of pi-ai's catalog, `anthropic/claude-opus-5-5` by
  *   default. An `anthropic/…` model requires ANTHROPIC_API_KEY; another catalog provider's key comes from its own
- *   variable. `openai-compatible/…` and a value without a catalog provider, such as `openai` or `qwen3.8-flash-next`,
- *   are refused with a pointer to SIGNUP_AGENT_PI_BASE_URL.
+ *   variable. SIGNUP_AGENT_PI_PROTOCOL, `openai-compatible/…` and a value without a catalog provider, such as
+ *   `openai` or `qwen3.8-flash-next`, are refused with a pointer to SIGNUP_AGENT_PI_BASE_URL.
  */
 function piModelSelection(optional: (name: string) => string | undefined, required: (name: string) => string): PiModelSelection {
   const configured = optional("SIGNUP_AGENT_PI_MODEL");
   const configuredBaseUrl = optional("SIGNUP_AGENT_PI_BASE_URL");
+  const configuredProtocol = optional("SIGNUP_AGENT_PI_PROTOCOL");
   const legacyPrefix = `${openAICompatibleProvider}/`;
+  if (configuredProtocol !== undefined && !(piEndpointProtocols as readonly string[]).includes(configuredProtocol)) {
+    throw new Error(`SIGNUP_AGENT_PI_PROTOCOL must be ${piEndpointProtocols.join(" or ")}, the API of the endpoint at SIGNUP_AGENT_PI_BASE_URL`);
+  }
+  if (configuredProtocol !== undefined && configuredBaseUrl === undefined) {
+    throw new Error("SIGNUP_AGENT_PI_PROTOCOL applies only to a custom endpoint: set SIGNUP_AGENT_PI_BASE_URL too, or unset SIGNUP_AGENT_PI_PROTOCOL");
+  }
   if (configuredBaseUrl !== undefined) {
     if (configured === undefined) {
       throw new Error("SIGNUP_AGENT_PI_MODEL is required with SIGNUP_AGENT_PI_BASE_URL: set it to the endpoint's model ID, such as qwen3.8-flash-next");
+    }
+    if ((configuredProtocol ?? "openai") === "anthropic") {
+      if (configured.startsWith(legacyPrefix)) {
+        throw new Error(`SIGNUP_AGENT_PI_MODEL ${configured} is the OpenAI-compatible form, but SIGNUP_AGENT_PI_PROTOCOL is anthropic: set SIGNUP_AGENT_PI_MODEL to the endpoint's model ID alone`);
+      }
+      return { kind: "anthropic-compatible", modelId: configured, baseUrl: endpointBaseUrl(configuredBaseUrl, "anthropic"), apiKey: required("SIGNUP_AGENT_PI_API_KEY") };
     }
     const modelId = configured.startsWith(legacyPrefix) ? configured.slice(legacyPrefix.length).trim() : configured;
     if (modelId === "") {
@@ -99,7 +130,7 @@ function piModelSelection(optional: (name: string) => string | undefined, requir
           `unset SIGNUP_AGENT_PI_BASE_URL to use the catalog model, or write the endpoint's model ID as ${legacyPrefix}${configured}`,
       );
     }
-    return { kind: "openai-compatible", modelId, baseUrl: openAICompatibleBaseUrl(configuredBaseUrl), apiKey: required("SIGNUP_AGENT_PI_API_KEY") };
+    return { kind: "openai-compatible", modelId, baseUrl: endpointBaseUrl(configuredBaseUrl, "openai"), apiKey: required("SIGNUP_AGENT_PI_API_KEY") };
   }
   const name = configured ?? "anthropic/claude-opus-5-5";
   if (name.startsWith(legacyPrefix)) {
