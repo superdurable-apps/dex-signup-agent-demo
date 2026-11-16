@@ -1,6 +1,8 @@
 // Application configuration from environment variables: `.env` locally (`npm start` loads it), the Project
 // configuration's application environment on Superverse. Secrets are never logged.
 
+import { getBuiltinModels, getBuiltinProviders, type BuiltinProvider } from "@earendil-works/pi-ai/providers/all";
+
 import type { ReviewChannel } from "./review-replies.ts";
 
 export interface SignupAgentConfig {
@@ -25,7 +27,10 @@ export interface SignupAgentConfig {
   readonly blobCacheDirectory: string;
 }
 
-/** The provider prefix of SIGNUP_AGENT_PI_MODEL that selects an OpenAI-compatible endpoint outside pi-ai's catalog. */
+/**
+ * The provider of an OpenAI-compatible model outside pi-ai's catalog, and the legacy SIGNUP_AGENT_PI_MODEL prefix
+ * `openai-compatible/<model ID>`, still accepted with SIGNUP_AGENT_PI_BASE_URL.
+ */
 export const openAICompatibleProvider = "openai-compatible";
 
 /**
@@ -57,23 +62,59 @@ function openAICompatibleBaseUrl(value: string): string {
   return value;
 }
 
+/** The provider of a `<provider>/<model ID>` value when it is one of pi-ai's catalog, such as `anthropic`. */
+function catalogProviderOf(name: string): BuiltinProvider | undefined {
+  const provider = name.slice(0, Math.max(name.indexOf("/"), 0));
+  return (getBuiltinProviders() as string[]).includes(provider) ? (provider as BuiltinProvider) : undefined;
+}
+
 /**
- * SIGNUP_AGENT_PI_MODEL `openai-compatible/<model ID>` selects SIGNUP_AGENT_PI_BASE_URL with SIGNUP_AGENT_PI_API_KEY;
- * an `anthropic/…` model requires ANTHROPIC_API_KEY; any other catalog model uses its provider's key from the environment.
+ * The pi model of SIGNUP_AGENT_PI_MODEL and SIGNUP_AGENT_PI_BASE_URL:
+ * - With SIGNUP_AGENT_PI_BASE_URL, the endpoint is OpenAI-compatible and SIGNUP_AGENT_PI_MODEL is required: the
+ *   endpoint's model ID as it is, slashes included (`qwen3.8-flash-next`, `meta-llama/Llama-3`), or the legacy
+ *   `openai-compatible/<model ID>`. A value that starts with a pi-ai catalog provider, such as `anthropic/…`, is
+ *   refused as ambiguous; an endpoint model ID that really starts with one is written `openai-compatible/<model ID>`.
+ *   SIGNUP_AGENT_PI_API_KEY is required.
+ * - Without it, SIGNUP_AGENT_PI_MODEL is `<provider>/<model ID>` of pi-ai's catalog, `anthropic/claude-opus-5-5` by
+ *   default. An `anthropic/…` model requires ANTHROPIC_API_KEY; another catalog provider's key comes from its own
+ *   variable. `openai-compatible/…` and a value without a catalog provider, such as `openai` or `qwen3.8-flash-next`,
+ *   are refused with a pointer to SIGNUP_AGENT_PI_BASE_URL.
  */
 function piModelSelection(optional: (name: string) => string | undefined, required: (name: string) => string): PiModelSelection {
-  const name = optional("SIGNUP_AGENT_PI_MODEL") ?? "anthropic/claude-opus-5-5";
-  const separator = name.indexOf("/");
-  if (separator <= 0 || separator === name.length - 1) {
-    throw new Error("SIGNUP_AGENT_PI_MODEL must be <provider>/<model ID>, such as anthropic/claude-opus-5-5 or openai-compatible/qwen3.8-flash-next");
+  const configured = optional("SIGNUP_AGENT_PI_MODEL");
+  const configuredBaseUrl = optional("SIGNUP_AGENT_PI_BASE_URL");
+  const legacyPrefix = `${openAICompatibleProvider}/`;
+  if (configuredBaseUrl !== undefined) {
+    if (configured === undefined) {
+      throw new Error("SIGNUP_AGENT_PI_MODEL is required with SIGNUP_AGENT_PI_BASE_URL: set it to the endpoint's model ID, such as qwen3.8-flash-next");
+    }
+    const modelId = configured.startsWith(legacyPrefix) ? configured.slice(legacyPrefix.length).trim() : configured;
+    if (modelId === "") {
+      throw new Error("SIGNUP_AGENT_PI_MODEL has no model ID: set it to the endpoint's model ID, such as qwen3.8-flash-next");
+    }
+    const provider = configured.startsWith(legacyPrefix) ? undefined : catalogProviderOf(configured);
+    if (provider !== undefined) {
+      throw new Error(
+        `SIGNUP_AGENT_PI_MODEL ${configured} names the pi-ai catalog provider ${provider}, but SIGNUP_AGENT_PI_BASE_URL is set: ` +
+          `unset SIGNUP_AGENT_PI_BASE_URL to use the catalog model, or write the endpoint's model ID as ${legacyPrefix}${configured}`,
+      );
+    }
+    return { kind: "openai-compatible", modelId, baseUrl: openAICompatibleBaseUrl(configuredBaseUrl), apiKey: required("SIGNUP_AGENT_PI_API_KEY") };
   }
-  const provider = name.slice(0, separator);
-  if (provider === openAICompatibleProvider) {
-    const baseUrl = openAICompatibleBaseUrl(required("SIGNUP_AGENT_PI_BASE_URL"));
-    return { kind: "openai-compatible", modelId: name.slice(separator + 1), baseUrl, apiKey: required("SIGNUP_AGENT_PI_API_KEY") };
+  const name = configured ?? "anthropic/claude-opus-5-5";
+  if (name.startsWith(legacyPrefix)) {
+    throw new Error(`SIGNUP_AGENT_PI_MODEL ${name} needs SIGNUP_AGENT_PI_BASE_URL, the endpoint's base URL, such as https://llm.example.com/v1`);
   }
-  if (optional("SIGNUP_AGENT_PI_BASE_URL") !== undefined) {
-    throw new Error(`SIGNUP_AGENT_PI_BASE_URL is set, but SIGNUP_AGENT_PI_MODEL ${name} is not ${openAICompatibleProvider}/<model ID>`);
+  const provider = catalogProviderOf(name);
+  if (provider === undefined) {
+    throw new Error(
+      `SIGNUP_AGENT_PI_MODEL ${name} is not <provider>/<model ID> of pi-ai's catalog, such as anthropic/claude-opus-5-5. ` +
+        "For an OpenAI-compatible endpoint, set SIGNUP_AGENT_PI_BASE_URL and SIGNUP_AGENT_PI_API_KEY, and SIGNUP_AGENT_PI_MODEL to the endpoint's model ID",
+    );
+  }
+  const modelId = name.slice(provider.length + 1);
+  if (!getBuiltinModels(provider).some((model) => model.id === modelId)) {
+    throw new Error(`SIGNUP_AGENT_PI_MODEL ${name}: pi-ai's catalog has no model ${modelId} of ${provider}`);
   }
   return { kind: "catalog", name, apiKey: provider === "anthropic" ? required("ANTHROPIC_API_KEY") : undefined };
 }

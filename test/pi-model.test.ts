@@ -32,13 +32,13 @@ test("another catalog model needs no ANTHROPIC_API_KEY: pi-ai reads its provider
   assert.deepEqual(configOf({ SIGNUP_AGENT_PI_MODEL: "openai/gpt-5" }).piModel, { kind: "catalog", name: "openai/gpt-5", apiKey: undefined });
 });
 
-test("openai-compatible/<model ID> selects the endpoint and its key, and needs no ANTHROPIC_API_KEY", () => {
+test("the legacy openai-compatible/<model ID> with a base URL selects the endpoint and its key, and needs no ANTHROPIC_API_KEY", () => {
   const environment = { SIGNUP_AGENT_PI_MODEL: "openai-compatible/qwen3.8-flash-next", SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1", SIGNUP_AGENT_PI_API_KEY: "sk-qwen" };
   assert.deepEqual(configOf(environment).piModel, { kind: "openai-compatible", modelId: "qwen3.8-flash-next", baseUrl: "https://llm.example.com/v1", apiKey: "sk-qwen" });
   // A model ID may itself contain a slash.
   assert.deepEqual(configOf({ ...environment, SIGNUP_AGENT_PI_MODEL: "openai-compatible/Qwen/Qwen3-8B" }).piModel, { kind: "openai-compatible", modelId: "Qwen/Qwen3-8B", baseUrl: "https://llm.example.com/v1", apiKey: "sk-qwen" });
   assert.throws(() => configOf({ ...environment, SIGNUP_AGENT_PI_API_KEY: "" }), /SIGNUP_AGENT_PI_API_KEY is required/);
-  assert.throws(() => configOf({ ...environment, SIGNUP_AGENT_PI_BASE_URL: "" }), /SIGNUP_AGENT_PI_BASE_URL is required/);
+  assert.throws(() => configOf({ ...environment, SIGNUP_AGENT_PI_BASE_URL: "" }), /needs SIGNUP_AGENT_PI_BASE_URL/);
 });
 
 test("SIGNUP_AGENT_PI_BASE_URL must be an http(s) base URL with a host, without a query, a fragment or /chat/completions", () => {
@@ -64,10 +64,49 @@ test("SIGNUP_AGENT_PI_BASE_URL must be an http(s) base URL with a host, without 
   }
 });
 
-test("a base URL without the openai-compatible model, or a model without a provider, is refused", () => {
-  assert.throws(() => configOf({ ANTHROPIC_API_KEY: "sk-ant", SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1" }), /SIGNUP_AGENT_PI_BASE_URL is set/);
-  assert.throws(() => configOf({ SIGNUP_AGENT_PI_MODEL: "qwen3.8-flash-next" }), /must be <provider>\/<model ID>/);
-  assert.throws(() => configOf({ SIGNUP_AGENT_PI_MODEL: "openai-compatible/" }), /must be <provider>\/<model ID>/);
+test("with SIGNUP_AGENT_PI_BASE_URL, SIGNUP_AGENT_PI_MODEL is the endpoint's model ID as it is", () => {
+  const endpoint = { SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1", SIGNUP_AGENT_PI_API_KEY: "sk-qwen" };
+  const modelIdOf = (model: string) => configOf({ ...endpoint, SIGNUP_AGENT_PI_MODEL: model }).piModel;
+  for (const [model, modelId] of [
+    ["qwen3.8-flash-next", "qwen3.8-flash-next"],
+    ["  qwen3.8-flash-next ", "qwen3.8-flash-next"],
+    // Slashes stay part of the ID when the prefix is no pi-ai catalog provider.
+    ["meta-llama/Llama-3", "meta-llama/Llama-3"],
+    ["qwen/qwen3", "qwen/qwen3"],
+    // The legacy prefix, as the Live settings have it.
+    ["openai-compatible/qwen3.8-flash-next", "qwen3.8-flash-next"],
+    // The legacy prefix is the way to write an endpoint model ID that starts with a catalog provider.
+    ["openai-compatible/openai/gpt-oss-120b", "openai/gpt-oss-120b"],
+  ]) {
+    assert.deepEqual(modelIdOf(model!), { kind: "openai-compatible", modelId, baseUrl: "https://llm.example.com/v1", apiKey: "sk-qwen" }, model);
+  }
+  // An ANTHROPIC_API_KEY in the environment does not matter here.
+  assert.equal(configOf({ ...endpoint, SIGNUP_AGENT_PI_MODEL: "qwen3.8-flash-next", ANTHROPIC_API_KEY: "sk-ant" }).piModel?.kind, "openai-compatible");
+});
+
+test("inconsistent pi model settings are refused at startup with what to set", () => {
+  const endpoint = { SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1", SIGNUP_AGENT_PI_API_KEY: "sk-qwen" };
+  const refusals: [Record<string, string>, RegExp][] = [
+    // A base URL with a catalog model.
+    [{ ...endpoint, SIGNUP_AGENT_PI_MODEL: "anthropic/claude-opus-5-5", ANTHROPIC_API_KEY: "sk-ant" }, /names the pi-ai catalog provider anthropic, but SIGNUP_AGENT_PI_BASE_URL is set: unset SIGNUP_AGENT_PI_BASE_URL .* or write the endpoint's model ID as openai-compatible\/anthropic\/claude-opus-5-5/],
+    [{ ...endpoint, SIGNUP_AGENT_PI_MODEL: "openai/gpt-oss-120b" }, /names the pi-ai catalog provider openai/],
+    // A base URL without a model, or with an empty one.
+    [{ ...endpoint }, /SIGNUP_AGENT_PI_MODEL is required with SIGNUP_AGENT_PI_BASE_URL/],
+    [{ ...endpoint, SIGNUP_AGENT_PI_MODEL: "  " }, /SIGNUP_AGENT_PI_MODEL is required with SIGNUP_AGENT_PI_BASE_URL/],
+    [{ ...endpoint, SIGNUP_AGENT_PI_MODEL: "openai-compatible/" }, /SIGNUP_AGENT_PI_MODEL has no model ID/],
+    // The legacy prefix without a base URL.
+    [{ SIGNUP_AGENT_PI_MODEL: "openai-compatible/qwen3.8-flash-next", SIGNUP_AGENT_PI_API_KEY: "sk-qwen" }, /openai-compatible\/qwen3.8-flash-next needs SIGNUP_AGENT_PI_BASE_URL/],
+    // No base URL and no catalog provider, as when the owner typed just "openai".
+    [{ SIGNUP_AGENT_PI_MODEL: "openai" }, /SIGNUP_AGENT_PI_MODEL openai is not <provider>\/<model ID> of pi-ai's catalog.*set SIGNUP_AGENT_PI_BASE_URL/],
+    [{ SIGNUP_AGENT_PI_MODEL: "qwen3.8-flash-next" }, /set SIGNUP_AGENT_PI_BASE_URL/],
+    [{ SIGNUP_AGENT_PI_MODEL: "meta-llama/Llama-3" }, /set SIGNUP_AGENT_PI_BASE_URL/],
+    // A catalog provider with a model its catalog lacks.
+    [{ SIGNUP_AGENT_PI_MODEL: "anthropic/no-such-model", ANTHROPIC_API_KEY: "sk-ant" }, /pi-ai's catalog has no model no-such-model of anthropic/],
+    [{ SIGNUP_AGENT_PI_MODEL: "anthropic/", ANTHROPIC_API_KEY: "sk-ant" }, /pi-ai's catalog has no model/],
+  ];
+  for (const [environment, error] of refusals) {
+    assert.throws(() => configOf(environment), error, JSON.stringify(environment));
+  }
 });
 
 test("the Claude Agent SDK harness has no pi model and requires no model key", () => {
