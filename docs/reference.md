@@ -125,7 +125,10 @@ Scenarios:
   the tools confirm the approval and the send in the thread.
 - A bystander's reply, this app's own post, another app's bot message, a bot-message subtype, an edit and a reply in
   another channel are never delivered; each reviewer reply reaches the session once; finish_review ends the session,
-  and a reply after it is consumed as undeliverable.
+  which closes `COMPLETED` with finish_review's result and the final assistant message stored, and a reply after it
+  is consumed as undeliverable. Every scenario that reaches finish_review checks the same, and so does the app test
+  `TestReviewIsApprovedAndSentFromSlackReplies` (graceful completion needs `dex-server-zd` 0.1.34 or newer on
+  `PATH`).
 - The same Slack event sent twice and handled once; a reviewer's reply in a thread that is no review's, dropped.
 - An approval and a rejection the server refuses, each posting its failure; a rejection with its reason in the
   thread.

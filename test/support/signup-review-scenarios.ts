@@ -143,7 +143,7 @@ export function registerSignupReviewScenarios(setup: SignupReviewScenarioSetup):
   async function waitForIdle(sessionId: string, afterTurns = 0): Promise<void> {
     await pollUntil(
       async () => {
-        // finish_review ends the session inside its turn, so an ended session is done too.
+        // finish_review completes the session when its turn ends, so an ended session is done too.
         if ((await client.describeFlow(sessionId)).status !== "running") {
           return true;
         }
@@ -154,9 +154,22 @@ export function registerSignupReviewScenarios(setup: SignupReviewScenarioSetup):
     );
   }
 
-  /** Waits until the session ended, as finish_review ends it. */
+  /**
+   * Waits until the session ended, as finish_review ends it: completed, not cancelled, after the rest of its turn,
+   * so the finish_review result and the model's final answer after it are stored.
+   */
   async function waitForEnd(sessionId: string): Promise<void> {
     await pollUntil(async () => ((await client.describeFlow(sessionId)).status === "running" ? undefined : true), { description: `${sessionId} ended`, ...waitOptions });
+    assert.equal((await client.describeFlow(sessionId)).status, "completed");
+    const messages = (await snapshotOf(sessionId)).messages;
+    const last = messages.at(-1);
+    assert.equal(last?.role, "assistant");
+    assert.equal(last?.text, "Done.");
+    assert.equal(last?.toolName ?? null, null);
+    const finish = messages.at(-2);
+    assert.equal(finish?.role, "tool");
+    assert.equal(finish?.toolName?.split("__").at(-1), "finish_review");
+    assert.match(finish?.toolOutput ?? "", /"status":\s*"finished"/);
   }
 
   /** Waits until the session holds the reply `[slack <ts>]`. */

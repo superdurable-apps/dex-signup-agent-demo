@@ -31,7 +31,8 @@ The prompt is `signupAgentPrompt` in [`src/signup-agent.ts`](../src/signup-agent
    - Each `[slack <ts>]` is handled at most once. An admin may repeat a request in a new message; the tools say
      when the write already happened.
 5. When the email was sent or its send failed, the account was rejected, or a tool reports that the account was
-   decided in Dex Cloud admin, post a one-line summary and call **finish_review** last. It ends the session.
+   decided in Dex Cloud admin, post a one-line summary and call **finish_review** last. The session completes when
+   that turn ends; the agent calls no more tools after it and ends the turn with a short final message.
 
 ## The tools
 
@@ -45,7 +46,7 @@ The prompt is `signupAgentPrompt` in [`src/signup-agent.ts`](../src/signup-agent
 | `approve_account()` | ReviewAPI `approve`, then a thread reply with the outcome (see [Decisions](#decisions)) | The thread reply is the connector write. Same cap as post_review | See [Decisions](#decisions) |
 | `reject_account(reason)` | ReviewAPI `reject` the same way, then `Rejected <name> (<email>): <reason>.` or `Rejection failed: <error>.` | Same as approve_account | Same as approve_account |
 | `send_welcome_email()` | Gmail `sendMessage` of the **latest posted draft** to the applicant, then a thread reply with the outcome (see [The welcome email](#the-welcome-email)) | `non_idempotent_write`, one tool Step. Manifest: `limited`, `maxSends` 3. App cap: 1. The outcome reply is a second Slack call capped at 1 | The account is active and a draft is posted. Refused with `the welcome email for draft <n> was already sent in this review` when the session's records hold a send of that draft that did not definitely fail |
-| `finish_review()` | Cancels its own session (a session never ends on its own) | `idempotent_write` | The account is no longer pending |
+| `finish_review()` | Asks its own session to complete (a session never ends on its own): `Client.stopFlow` with `StopType.GRACEFUL_COMPLETE`. The rest of the turn runs, its result and the final assistant message are stored, and the session Flow closes `COMPLETED` (see [Ending a review](#ending-a-review)) | `idempotent_write` | The account is no longer pending |
 
 No tool asks for Dex tool approval (`requiresApproval: false`), and no tool checks the reviewers' replies: the
 reply Trigger delivers every reply of a listed reviewer, and the agent decides what it means. The tools check only
@@ -297,6 +298,25 @@ Claude Code login (<code>SIGNUP_AGENT_CLAUDE_AUTH=login</code>), or <code>ANTHRO
 Each harness has its own session Flow type, and the Worker runs one of them: finish the open reviews before
 switching, or switch back to let them finish. Only the pi harness runs on Superverse.
 
+## Ending a review
+
+finish_review is the only code that stops a session, and it does so from inside the session's own turn with
+`client.stopFlow(sessionId, { type: StopType.GRACEFUL_COMPLETE })` (`StopType` from `@superdurable/dex`; the
+promise resolves once Dex accepts the request). The turn runs to its end: finish_review's result and the model's
+final answer are stored in the session's messages, and the session Flow closes `COMPLETED` at its next wait for a
+user message. A reply already queued for the session still runs its turn first; the tools refuse any decision on the
+decided account, and the session then completes. A Slack reply after the close is consumed as undeliverable.
+
+Deployment constraint: graceful completion needs server-zd 0.1.34 or newer (an older server rejects the request,
+finish_review fails and the session keeps waiting) and every Worker of the session Flow type on
+`@superdurable/dex-agents` 0.6.14 or newer (`@superdurable/dex` 1.45.6). Upgrade all Workers before a review can
+reach finish_review. A session that was already waiting for a reply before the upgrade completes this way only
+after its next turn ends and it waits again.
+
+Everything else that ends a review is a person in Dex Web, and that stays a **cancel**: it ends the session at once,
+also while it waits for a reply, which a graceful completion would not do for a session idle since before the
+upgrade. The watcher, the reply Trigger and the HTTP API never stop a session.
+
 ## Limits
 
 - The agent decides from the delivered replies, so whatever a listed reviewer writes is what the agent acts on, and
@@ -327,8 +347,9 @@ switching, or switch back to let them finish. Only the pi harness runs on Superv
 - The thread index is a per-process cache. An unknown thread costs one search of the running sessions and a read of
   each one not indexed yet, every time for a stranger's thread in the review channel. An unknown thread younger than
   2 minutes is retried, which holds the replies behind it for up to 2 minutes.
-- finish_review cancels its own session from inside its tool Step, so that call's result is never saved. The
-  summary was posted before it.
+- finish_review fails while the server is older than server-zd 0.1.34, which rejects a graceful completion; the
+  session keeps waiting until an admin cancels it in Dex Web. A session idle since before the upgrade to 0.6.14
+  completes only after its next turn; cancel it in Dex Web to end it at once.
 - A turn note that names the send tool in another call's text, or a send and a newer draft in the same failed turn,
   blocks the send of that draft, which then goes out by hand.
 - The ReviewAPI lists pending sign-ups oldest first, and a watcher round reads at most 10 pages of 100: with a

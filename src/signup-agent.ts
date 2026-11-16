@@ -32,7 +32,7 @@ Procedure:
    - Handle each "[slack <ts>]" message at most once: a message whose ts you have already seen is a repeat; ignore it. An admin may repeat a request with a new message, such as after a turn of yours failed: handle it, and the tools tell you when the write already happened.
    - When you mention a draft, mean the latest one, and never number drafts in your own text: the tools number them.
    A tool that refuses tells you why; explain it briefly with reply_in_thread when it helps the admins. Be concise.
-5. When the email was sent or its send failed, the account was rejected, or a tool reports that the account was decided in Dex Cloud admin, post a one-line summary with reply_in_thread, then call finish_review last: it ends the session.`;
+5. When the email was sent or its send failed, the account was rejected, or a tool reports that the account was decided in Dex Cloud admin, post a one-line summary with reply_in_thread, then call finish_review last: the session completes when that turn ends. After it, call no more tools and end your turn with a short final message.`;
 
 /** The first message of a review session: the applicant's sign-up data, as data. */
 export function firstReviewMessage(account: Account): string {
@@ -109,7 +109,7 @@ export function createSignupTools(services: SignupServices): SignupTool[] {
     },
     {
       name: "finish_review",
-      description: "End the review and this session; call it last. Allowed once the account is no longer waiting for a decision.",
+      description: "End the review: the session completes when this turn ends. Call it last, and call no more tools after it. Allowed once the account is no longer waiting for a decision.",
       schema: z.object({}),
       effect: "idempotent_write",
       run: async (_args, call) => {
@@ -118,9 +118,9 @@ export function createSignupTools(services: SignupServices): SignupTool[] {
         if (account.status === "pending_approval") {
           refuse("the account is still waiting for a decision");
         }
-        // A session never ends on its own: this cancels it, as the tool's last act.
-        await services.sessions.endSession(accountId, "review finished");
-        return { status: "finished", accountStatus: account.status };
+        // A session never ends on its own: this asks it to complete once this turn ends.
+        await services.sessions.endSession(accountId);
+        return { status: "finished", accountStatus: account.status, next: "The session completes when this turn ends. Call no more tools; end your turn now." };
       },
     },
   ];

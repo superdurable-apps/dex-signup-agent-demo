@@ -81,8 +81,19 @@ apptest(
     assert.equal(reviewApi.accountOf(accountId)?.status, "active");
     gmail.sendMessage().forFlow(sessionId).respond(sendMessageBranch("sent", { sender: "<hello@example.com>", recipients: ["<ada@example.com>"], messageId: "gmail-app-1", threadId: "t-1" }));
     thread.reply(reviewerId, "send");
-    // finish_review ends the session after the send.
+    // finish_review ends the session after the send: it completes once that turn ends, not cancelled.
     await env.eventually(30_000, async () => (await env.dex.describeFlow(sessionId)).status !== "running");
+    assert.equal((await env.dex.describeFlow(sessionId)).status, "completed");
+    // The rest of the turn is stored: finish_review's result, then the model's final answer, with no tool call after it.
+    const messages = (await env.application.services.sessions.snapshot(accountId)).messages;
+    assert.deepEqual(
+      messages.slice(-2).map((message) => [message.role, message.toolName, message.text]),
+      [
+        ["tool", "finish_review", null],
+        ["assistant", null, "Done."],
+      ],
+    );
+    assert.match(messages.at(-2)!.toolOutput ?? "", /"status":\s*"finished"/);
     const sends = gmail.sendMessage().calls().filter((call) => call.flowId === sessionId);
     assert.equal(sends.length, 1);
     assert.match(sends[0]!.input.textBody, /Revised: shorter/);
