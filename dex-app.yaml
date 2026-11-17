@@ -46,7 +46,7 @@ connectors:
   - connectionName: review-slack
     connectorId: slack
     package: "@superdurable/connector-slack"
-    version: "0.7.0"
+    version: "0.8.0"
     authMethodId: ""
     operations: [postChannelMessage, postThreadReply]
     # Must match scripts/session-trigger-bindings.json and the session graphs'
@@ -57,6 +57,6 @@ connectors:
   - connectionName: welcome-gmail
     connectorId: gmail
     package: "@superdurable/connector-google-gmail"
-    version: "0.3.0"
+    version: "0.4.0"
     authMethodId: google-oauth
     operations: [sendMessage]

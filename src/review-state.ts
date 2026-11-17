@@ -472,6 +472,15 @@ export interface ToolHistory {
  * send counts; without it in an incomplete history, the draft counts as sent, since the part not read may hold it.
  */
 export function wasDraftSent(history: ToolHistory, draftNumber: number): boolean {
+  return draftSendOf(history, draftNumber) !== undefined;
+}
+
+/**
+ * The earlier send of draft `draftNumber`, as {@link wasDraftSent} finds it: `sent` when a send after that draft's
+ * post succeeded, `unknown` when one may have gone out (its outcome stayed unknown, or the history read is incomplete
+ * and does not show the post), and `undefined` when none did.
+ */
+export function draftSendOf(history: ToolHistory, draftNumber: number): "sent" | "unknown" | undefined {
   const { records, isComplete } = history;
   // A draft's post counts only from a structured record: a stored tool result or the running turn's call record.
   const posted = records.filter(
@@ -482,10 +491,11 @@ export function wasDraftSent(history: ToolHistory, draftNumber: number): boolean
       record.output.includes(`"draft":{"number":${draftNumber}}`),
   );
   if (posted.length === 0 && !isComplete) {
-    return true;
+    return "unknown";
   }
   const since = posted.at(-1)?.position ?? Number.NEGATIVE_INFINITY;
-  return records.some((record) => record.tool === "send_welcome_email" && record.outcome !== "failed" && record.position > since);
+  const sends = records.filter((record) => record.tool === "send_welcome_email" && record.outcome !== "failed" && record.position > since);
+  return sends.some((record) => record.outcome === "succeeded") ? "sent" : sends.length > 0 ? "unknown" : undefined;
 }
 
 /**

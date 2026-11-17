@@ -137,10 +137,15 @@ Scenarios:
 - An approval and a send each followed by a failed model call and the reviewer asking again, which repeat neither
   the decision, its confirmation nor the email; an approval asked again after an admin rejected the account, which
   reports the change and posts nothing.
-- Time travel of the session to before the send, which sends it again; a confirmation post that fails without
-  changing the approval.
-- A send whose outcome is unknown, with the Sent Mail note; a send Gmail rejects, recorded as failed with
-  "Nothing was sent".
+- Time travel of the session to before the send, which sends it again; an approval note whose outcome is unknown
+  and one Slack rejects, which leave the approval as it is and report `unknown` and `notPosted`.
+- A send whose outcome is unknown, whose one note from the agent points to Sent Mail; a send Gmail rejects,
+  recorded as failed with "Nothing was sent". send_welcome_email posts nothing itself.
+- Bounded resends: a review post, a draft and a send whose first attempt asks to retry after an unknown outcome,
+  each sent again by the tool Step's retry under the same call identity and recorded once, with one note of the
+  send; a draft whose outcome stays unknown, which is not the latest draft and may be posted again; a send whose
+  outcome stays unknown, after which `send` is refused with "may already have been sent". The mocks keep no fence,
+  so these show the Step retry; the fence's read-back and resend decisions are unit tests with the real connectors.
 - A draft the same as the latest one, refused; a send before the approval, refused; two tool calls in one model
   response; a sign-up from before `SIGNUP_REVIEW_SINCE`.
 - A restart: a new runner with an empty thread index, and a reply that arrives while the Worker is down, retried from
@@ -149,6 +154,6 @@ Scenarios:
 **Unit tests** (`test/`): the reply target's routing (filtered, delivered, dropped, retried for a recent thread,
 dropped for a disputed thread); the review records read from tool results and never from a turn note; the index
 refusing a thread two accounts claim; the optional sign-up answers (`jobTitle`, `company`, `purpose`) read when
-present, absent or empty, given to the agent only when present, and shown escaped and cut in the review post; the send cap of send_welcome_email's outcome reply against the SDK fence; the
+present, absent or empty, given to the agent only when present, and shown escaped and cut in the review post; the connector tools' session policies, which set no send cap, and each tool call pinning the connectors' declared cap of 3; a decision note told apart as posted, not posted or unknown; the released Slack postThreadReply and Gmail sendMessage with the real SDK fence over a fake transport and a fake tool Step (`test/connector-fences.test.ts`): the cap of 3 sends, Slack's read-back of a checkpointed `ts`, Gmail's Sent Mail read-back by Message-ID, a definite failure never resent, and a second fenced write in one Step taking over its checkpoint; a send of a draft told apart as sent or possibly sent; the
 pi model rules and custom endpoints; and `fetch_profile`'s checks for private addresses, redirects to private
 addresses and linear-time parsing of adversarial HTML.

@@ -1,43 +1,67 @@
-// The send cap of the connector writes a tool makes itself in its Step, checked against the Connector SDK's own
-// single-dispatch fence: after an attempt whose send may have gone out, a retry only reads back.
+// The send caps of the connector tools: the app keeps each connector's declared bounded resend. The connectors' fence
+// behaviour itself is in test/connector-fences.test.ts.
 
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createCall, definitionMaxSends, type ConnectionRef } from "@superdurable/connectors-sdk";
-import { Fence } from "@superdurable/connectors-sdk/singledispatch";
-import { PostThreadReplyDefinition } from "@superdurable/connector-slack";
-import type { AsyncContext } from "@superdurable/dex";
+import gmailManifest from "@superdurable/connector-google-gmail/dex-connector.json" with { type: "json" };
+import { GmailMock } from "@superdurable/connector-google-gmail/mock";
+import slackManifest from "@superdurable/connector-slack/dex-connector.json" with { type: "json" };
+import { GeneratedMock } from "@superdurable/connector-slack/mock";
+import type { AgentToolCall, AgentTurnContext } from "@superdurable/dex-agents";
+import type { ConnectorToolSource } from "@superdurable/dex-agents/connectors";
 
-import { singleSendCall } from "../src/signup-agent.ts";
+import { confirmationStateOf, createSignupConnectorTools, repeatedConfirmation, signupConnectorToolPolicies, type SignupServices } from "../src/signup-agent.ts";
 
-const connection: ConnectionRef = { provider: "slack", name: "review-slack" };
+const connectorTools = ["post_review", "post_draft", "reply_in_thread", "approve_account", "reject_account", "send_welcome_email"];
 
-/** The second attempt of a Step whose first attempt claimed one send and then ended with an unknown outcome. */
-function retryContext(callId: () => string): AsyncContext {
-  return {
-    flowId: "signup-review-acct1",
-    stepExecutionId: "step-1",
-    attempt: 2,
-    hasLastHeartbeatValue: () => true,
-    getLastHeartbeatValue: () => ({ callId: callId(), attempt: 1, state: "claimed", sendCount: 1 }),
-  } as unknown as AsyncContext;
-}
+/** The cap a manifest declares for `operationId`. */
+const declaredCap = (manifest: unknown, operationId: string): unknown =>
+  (manifest as { factories: { operationId?: string; agent?: { maxSends?: unknown } }[] }).factories.find((entry) => entry.operationId === operationId)?.agent?.maxSends;
 
-test("send_welcome_email's outcome reply never gets a second send after an unknown outcome", () => {
-  const operation = PostThreadReplyDefinition.operation;
-  const slackCap = definitionMaxSends(PostThreadReplyDefinition);
-  assert.ok(slackCap >= 2, "Slack's postThreadReply declares a bounded resend");
+test("the connector tools' session policies set no send cap, only no approval", () => {
+  assert.deepEqual(Object.keys(signupConnectorToolPolicies).sort(), [...connectorTools].sort());
+  for (const [name, policy] of Object.entries(signupConnectorToolPolicies)) {
+    assert.equal(policy.maxSends, undefined, `${name} keeps the connector's declared cap`);
+    assert.equal(policy.requiresApproval, false, `${name} asks for no Dex approval`);
+  }
+});
 
-  let callId = "";
-  const capped = singleSendCall(retryContext(() => callId), connection, operation);
-  callId = capped.id;
-  assert.equal(capped.maxSendsOverride, 1);
-  assert.equal(new Fence(capped, 30_000, { maxSends: slackCap }).decide().kind, "readBackRequired");
+test("each connector tool call carries the connector's declared cap of 3", () => {
+  assert.equal(declaredCap(slackManifest, "postChannelMessage"), 3);
+  assert.equal(declaredCap(slackManifest, "postThreadReply"), 3);
+  assert.equal(declaredCap(gmailManifest, "sendMessage"), 3);
+  const services = { slack: new GeneratedMock("review-slack").connection(), gmail: new GmailMock("welcome-gmail").connection(), slackChannelId: "C1" } as unknown as SignupServices;
+  const source = createSignupConnectorTools(services) as ConnectorToolSource;
+  const turn = { toolPolicies: signupConnectorToolPolicies } as unknown as AgentTurnContext;
+  for (const [index, name] of connectorTools.entries()) {
+    // The connector source reads only the call's name and arguments here, not its listed definition.
+    const call = { toolCallId: `call-${index}`, toolName: name, arguments: "{}" } as unknown as Parameters<ConnectorToolSource["deferredToolCall"]>[1];
+    const deferred = source.deferredToolCall(turn, call);
+    // Dex Agents passes this pinned cap to the connector as the call's maxSendsOverride on every attempt.
+    assert.deepEqual(JSON.parse(deferred.toolSourceReference ?? "{}"), { tool: name, maxSends: 3 }, name);
+    assert.equal(deferred.policy.requiresApproval, false, name);
+    const options = source.toolCallStepOptions({ toolName: name, toolSourceReference: deferred.toolSourceReference } as unknown as AgentToolCall);
+    assert.ok((options?.boundedResendExecuteRetry?.maximumAttempts ?? 0) >= 3, `${name}'s tool Step gets an attempt per send`);
+  }
+});
 
-  // Without the override the same retry may send again: the reason for singleSendCall.
-  let uncappedId = "";
-  const uncapped = createCall(retryContext(() => uncappedId), connection, operation);
-  uncappedId = uncapped.id;
-  assert.equal(new Fence(uncapped, 30_000, { maxSends: slackCap }).decide().kind, "readBackThenResendAllowed");
+test("a decision tool's note is posted, not posted, or unknown, from the Slack attempt", () => {
+  const failure = { kind: "TRANSPORT", provider: "slack", operation: "postThreadReply", message: "x" };
+  assert.equal(confirmationStateOf({ kind: "branch", branch: "sent" }), "posted");
+  // Slack selects these only when nothing of the call went out.
+  assert.equal(confirmationStateOf({ kind: "branch", branch: "providerRejected", failure }), "notPosted");
+  assert.equal(confirmationStateOf({ kind: "branch", branch: "defect", failure }), "notPosted");
+  // A retry may follow a lost answer, and an uncertain post may be in the thread.
+  assert.equal(confirmationStateOf({ kind: "retry", failure }), "unknown");
+  assert.equal(confirmationStateOf({ kind: "uncertain", branch: "uncertain", failure }), "unknown");
+});
+
+test("a decision made earlier in the review reports its note as posted only when it was posted", () => {
+  assert.equal(repeatedConfirmation("posted"), "posted");
+  // The model may have posted the outcome itself since, or its turn failed first: never repost.
+  assert.equal(repeatedConfirmation("notPosted"), "unknown");
+  assert.equal(repeatedConfirmation("unknown"), "unknown");
+  // An older record without the field.
+  assert.equal(repeatedConfirmation(undefined), "unknown");
 });
