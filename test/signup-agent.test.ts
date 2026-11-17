@@ -11,7 +11,7 @@ import { GeneratedMock } from "@superdurable/connector-slack/mock";
 import type { AgentToolCall, AgentTurnContext } from "@superdurable/dex-agents";
 import type { ConnectorToolSource } from "@superdurable/dex-agents/connectors";
 
-import { confirmationStateOf, createSignupConnectorTools, signupConnectorToolPolicies, type SignupServices } from "../src/signup-agent.ts";
+import { confirmationStateOf, createSignupConnectorTools, repeatedConfirmation, signupConnectorToolPolicies, type SignupServices } from "../src/signup-agent.ts";
 
 const connectorTools = ["post_review", "post_draft", "reply_in_thread", "approve_account", "reject_account", "send_welcome_email"];
 
@@ -55,4 +55,13 @@ test("a decision tool's note is posted, not posted, or unknown, from the Slack a
   // A retry may follow a lost answer, and an uncertain post may be in the thread.
   assert.equal(confirmationStateOf({ kind: "retry", failure }), "unknown");
   assert.equal(confirmationStateOf({ kind: "uncertain", branch: "uncertain", failure }), "unknown");
+});
+
+test("a decision made earlier in the review reports its note as posted only when it was posted", () => {
+  assert.equal(repeatedConfirmation("posted"), "posted");
+  // The model may have posted the outcome itself since, or its turn failed first: never repost.
+  assert.equal(repeatedConfirmation("notPosted"), "unknown");
+  assert.equal(repeatedConfirmation("unknown"), "unknown");
+  // An older record without the field.
+  assert.equal(repeatedConfirmation(undefined), "unknown");
 });

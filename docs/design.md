@@ -67,6 +67,11 @@ reaches the model only as Dex's fixed unknown-outcome text, so the prompt has it
   never reposts it, which could duplicate it. The next time it writes in the thread, at the latest in its closing
   summary, it says that the note may be missing or duplicated and asks the admins to check the thread.
 
+When the session already made the decision, as when the admins ask again after a failed turn, the tool posts
+nothing and reports the earlier note as `posted` only when it was posted. Otherwise, or for an older record without
+the field, it reports `unknown`: the model may have posted the outcome itself since, or its turn failed first, and it
+does not track that, so the model does not repost and asks the admins to check the thread.
+
 send_welcome_email posts nothing: after each call that is not a refusal, the model posts exactly one note of its
 outcome with reply_in_thread, in that tool's own Step (see [One fenced write per Step](#one-fenced-write-per-step)).
 

@@ -355,7 +355,27 @@ export function registerSignupReviewScenarios(setup: SignupReviewScenarioSetup):
     await replyAndWait(sessionId, thread, "approve");
     assert.equal(decisionsOf(accountId).length, 1);
     assert.equal(threadReplies(sessionId).filter((text) => text.startsWith("Approved ")).length, 1);
-    assert.match((await resultsOf(sessionId, "approve_account")).at(-1) ?? "", /already done earlier in this review/);
+    const repeated = (await resultsOf(sessionId, "approve_account")).at(-1) ?? "";
+    assert.match(repeated, /already done earlier in this review/);
+    // The earlier note was posted, so the repeat says so.
+    assert.match(repeated, /"confirmation":"posted"/);
+  });
+
+  test(`${setup.harnessName}: an approval repeated after the turn failed, whose note was not posted, reports the note as unknown`, async () => {
+    const { accountId, sessionId, thread } = await startReview(failAfterApproveWord, 1710000255);
+    slack
+      .postThreadReply()
+      .forFlow(sessionId)
+      .respond(postThreadReplyProviderRejected({ message: { channelId, timestamp: "", threadTimestamp: thread.rootTs, userId: botUserId, text: "" } }, failure("postThreadReply", "not_in_channel")));
+    // The approval is made and its note not posted; the turn then fails before the model could post the outcome.
+    await replyAndWait(sessionId, thread, "approve");
+    assert.equal(reviewApi.accountOf(accountId)?.status, "active");
+    await replyAndWait(sessionId, thread, "approve");
+    assert.equal(decisionsOf(accountId).length, 1);
+    // The model may or may not have posted the outcome since, so it must not repost; it asks the admins to check.
+    const repeated = (await resultsOf(sessionId, "approve_account")).at(-1) ?? "";
+    assert.match(repeated, /already done earlier in this review/);
+    assert.match(repeated, /"confirmation":"unknown"/);
   });
 
   test(`${setup.harnessName}: an approval repeated after an admin rejected the account says so and posts nothing`, async () => {

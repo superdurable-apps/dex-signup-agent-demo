@@ -189,6 +189,14 @@ async function confirm(channelId: string, thread: ReviewThread, text: string, po
   }
 }
 
+/**
+ * The note's state a decision tool reports when the session already made that decision. `posted` stays `posted`.
+ * Anything else, a missing field of an older record included, is `unknown`: the model may or may not have posted the
+ * outcome itself since, as when its turn failed after the tool, so it must not post it again and asks the admins to
+ * check the thread.
+ */
+export const repeatedConfirmation = (earlier: unknown): ConfirmationState => (earlier === "posted" ? "posted" : "unknown");
+
 /** The end of a decision tool's failure text: how its own note of the failure went. */
 const noteOfFailure = (state: ConfirmationState) => ` (thread note: ${state})`;
 
@@ -379,9 +387,8 @@ export function createSignupConnectorTools(services: SignupServices): ToolSource
         const verdict = earlierDecision(decision, current.status);
         if (verdict === "same") {
           // This decision already succeeded in this session, as after a failed turn: no second request or confirmation.
-          // The earlier note's state is left out: the model already acted on it, and must not post it again now.
-          const { confirmation: _confirmation, confirmationPosted: _confirmationPosted, ...result } = parseObject(earlier);
-          return newMutationBranch("sent", { ...result, accountStatus: current.status, note: "already done earlier in this review; nothing was posted again" });
+          const { confirmation, confirmationPosted: _confirmationPosted, ...result } = parseObject(earlier);
+          return newMutationBranch("sent", { ...result, accountStatus: current.status, confirmation: repeatedConfirmation(confirmation), note: "already done earlier in this review; nothing was posted again" });
         }
         if (verdict === "changed") {
           return newMutationBranch("sent", {
