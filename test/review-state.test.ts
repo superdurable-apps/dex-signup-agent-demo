@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { buildTurnFailureNote, outcomeUnknownToolResult, type AgentMessage, type AgentSnapshot, type AgentToolCallRecord } from "@superdurable/dex-agents";
 
-import { ReviewSessions, earlierDecision, jsonValueEnd, noteEntries, outcomeOfResult, reviewRecordOf, succeededOutput, toolRecordsOf, wasDraftSent, type ToolRecord } from "../src/review-state.ts";
+import { ReviewSessions, draftSendOf, earlierDecision, jsonValueEnd, noteEntries, outcomeOfResult, reviewRecordOf, succeededOutput, toolRecordsOf, wasDraftSent, type ToolRecord } from "../src/review-state.ts";
 
 const at = "2026-11-13T10:00:00.000Z";
 const message = (sequence: number, role: AgentMessage["role"], text: string | null, extra: Partial<AgentMessage> = {}): AgentMessage =>
@@ -43,6 +43,13 @@ test("the thread and the latest draft come from the review's own tool results", 
   assert.equal(reviewRecordOf(complete([])).thread, undefined);
   // An unknown post_review may have posted: post_review is refused from then on.
   assert.equal(reviewRecordOf(complete(toolRecordsOf([tool(2, "post_review", outcomeUnknownToolResult)], []))).isReviewPosted, true);
+  // The call still running, as on its own Step retry after an unknown outcome, is not counted, so the retry is not
+  // refused by its own first attempt.
+  assert.equal(reviewRecordOf(complete(toolRecordsOf([], [call("post_review", "{}", "running", "")]))).isReviewPosted, false);
+  // A post_draft whose outcome stayed unknown is not the latest draft, so send_welcome_email never sends it, and a
+  // later post_draft is not refused as the same draft.
+  const unknownDraft = reviewRecordOf(complete(toolRecordsOf([tool(2, "post_review", review), tool(5, "post_draft", outcomeUnknownToolResult)], [])));
+  assert.equal(unknownDraft.latestDraft?.number, 1);
   // Without its first messages, the history may hide the review post.
   assert.equal(reviewRecordOf({ records: [], isComplete: false }).isReviewPosted, true);
 });
@@ -132,6 +139,14 @@ test("the session's records tell whether the latest draft was sent, from tool re
   assert.equal(wasDraftSent(complete(failed), 2), false);
   const unknown = toolRecordsOf([tool(1, "post_draft", posted(2)), note(2, [call("send_welcome_email", "{}", "outcome_unknown", "")]), tool(3, "x", outcomeUnknownToolResult)], []);
   assert.equal(wasDraftSent(complete(unknown), 2), true);
+  // A send whose outcome stayed unknown after the connector's resends is a possible send, told apart from a success.
+  assert.equal(draftSendOf(complete(unknown), 2), "unknown");
+  assert.equal(draftSendOf(complete(toolRecordsOf([tool(1, "post_draft", posted(2)), tool(2, "send_welcome_email", outcomeUnknownToolResult)], [])), 2), "unknown");
+  assert.equal(draftSendOf(complete(toolRecordsOf([tool(1, "post_draft", posted(2)), tool(2, "send_welcome_email", outcomeUnknownToolResult), tool(3, "send_welcome_email", sent)], [])), 2), "sent");
+  assert.equal(draftSendOf(complete(viaNote), 2), "sent");
+  assert.equal(draftSendOf(complete(refused), 2), undefined);
+  assert.equal(draftSendOf(complete(failed), 2), undefined);
+  assert.equal(draftSendOf({ records: [], isComplete: false }, 2), "unknown");
   // A send of an earlier draft does not block a newer draft.
   assert.equal(wasDraftSent(complete(toolRecordsOf([tool(1, "send_welcome_email", sent), tool(2, "post_draft", posted(3))], [])), 3), false);
   // A finished call of the running turn counts; the call still running does not.

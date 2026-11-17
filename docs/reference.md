@@ -141,6 +141,11 @@ Scenarios:
   changing the approval.
 - A send whose outcome is unknown, with the Sent Mail note; a send Gmail rejects, recorded as failed with
   "Nothing was sent".
+- Bounded resends: a review post, a draft and a send whose first attempt asks to retry after an unknown outcome,
+  each sent again by the tool Step's retry under the same call identity and recorded once, with the send confirmed
+  once and no failure note; a draft whose outcome stays unknown, which is not the latest draft and may be posted
+  again; a send whose outcome stays unknown, after which `send` is refused with "may already have been sent". The
+  mocks keep no fence, so these show the Step retry; the fence's read-back and resend decisions are unit tests.
 - A draft the same as the latest one, refused; a send before the approval, refused; two tool calls in one model
   response; a sign-up from before `SIGNUP_REVIEW_SINCE`.
 - A restart: a new runner with an empty thread index, and a reply that arrives while the Worker is down, retried from
@@ -149,6 +154,6 @@ Scenarios:
 **Unit tests** (`test/`): the reply target's routing (filtered, delivered, dropped, retried for a recent thread,
 dropped for a disputed thread); the review records read from tool results and never from a turn note; the index
 refusing a thread two accounts claim; the optional sign-up answers (`jobTitle`, `company`, `purpose`) read when
-present, absent or empty, given to the agent only when present, and shown escaped and cut in the review post; the send cap of send_welcome_email's outcome reply against the SDK fence; the
+present, absent or empty, given to the agent only when present, and shown escaped and cut in the review post; the connector tools' session policies, which set no send cap, and each tool call pinning the connectors' declared cap of 3; send_welcome_email's outcome reply against the SDK fence, with Slack's cap after its own unknown send and failing closed on the email's checkpoint; a send of a draft told apart as sent or possibly sent; the
 pi model rules and custom endpoints; and `fetch_profile`'s checks for private addresses, redirects to private
 addresses and linear-time parsing of adversarial HTML.

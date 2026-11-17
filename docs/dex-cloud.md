@@ -31,8 +31,8 @@ reads the manifest through it.
 
 | Connection | Connector | Package | `authMethodId` | Operations |
 | --- | --- | --- | --- | --- |
-| `review-slack` | `slack` | `@superdurable/connector-slack` 0.7.0 | `""` | `postChannelMessage`, `postThreadReply`; Trigger `threadReplyCreated`, binding `signup-review-reply` |
-| `welcome-gmail` | `gmail` | `@superdurable/connector-google-gmail` 0.3.0 | `google-oauth` | `sendMessage` |
+| `review-slack` | `slack` | `@superdurable/connector-slack` 0.8.0 | `""` | `postChannelMessage`, `postThreadReply`; Trigger `threadReplyCreated`, binding `signup-review-reply` |
+| `welcome-gmail` | `gmail` | `@superdurable/connector-google-gmail` 0.4.0 | `google-oauth` | `sendMessage` |
 
 - `review-slack` is the Project's shared Slack connection. It has no app-level token, so replies arrive through the
   platform's relay, not Socket Mode.

@@ -2,7 +2,7 @@
   {
     "connectionName": "review-slack",
     "packageName": "@superdurable/connector-slack",
-    "packageVersion": "0.7.0",
+    "packageVersion": "0.8.0",
     "triggerName": "threadReplyCreated",
     "bindingName": "signup-review-reply",
     "configurationUI": {

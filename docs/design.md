@@ -40,12 +40,12 @@ The prompt is `signupAgentPrompt` in [`src/signup-agent.ts`](../src/signup-agent
 | --- | --- | --- | --- |
 | `fetch_profile(url)` | Reads one public HTTPS page as text | `read` | `https` on port 443 only, no credentials in the URL, 1 MB, 10 s, 3 redirects; every resolved address must be public |
 | `github_user(login)` | GitHub public API: the user and their most starred repositories | `read` | |
-| `post_review(recommendation, reasons, emailSubject, emailBody)` | Slack `postChannelMessage` in the review channel: the review, draft 1 in a code block, the harness and the reply instructions. Its result holds the thread and draft 1, and is the session's record of the review | `non_idempotent_write`, one tool Step. Manifest: `limited`, `maxSends` 3. App cap: 1 | Refused once the session's records hold a post_review that succeeded or whose outcome is unknown |
-| `post_draft(subject, body)` | Slack `postThreadReply` with `[draft <n>]`. Its result is the record of the new latest draft. The footer follows the account's status at post time: `Reply send to send this draft` once it is active, otherwise `Approve the account first` | Same as post_review | Needs the review thread. Refused when subject and body equal the latest draft |
-| `reply_in_thread(text)` | Slack `postThreadReply` | Same as post_review | Needs the review thread |
-| `approve_account()` | ReviewAPI `approve`, then a thread reply with the outcome (see [Decisions](#decisions)) | The thread reply is the connector write. Same cap as post_review | See [Decisions](#decisions) |
+| `post_review(recommendation, reasons, emailSubject, emailBody)` | Slack `postChannelMessage` in the review channel: the review, draft 1 in a code block, the harness and the reply instructions. Its result holds the thread and draft 1, and is the session's record of the review | `non_idempotent_write`, one tool Step. Manifest: `limited`, `maxSends` 3; the app keeps that cap | Refused once the session's records hold a post_review that succeeded (`the review is already posted`) or whose outcome stayed unknown after the cap (`may have posted the review`) |
+| `post_draft(subject, body)` | Slack `postThreadReply` with `[draft <n>]`. Its result is the record of the new latest draft. The footer follows the account's status at post time: `Reply send to send this draft` once it is active, otherwise `Approve the account first` | Same as post_review | Needs the review thread. Refused when subject and body equal the latest draft. Not refused after an unknown outcome |
+| `reply_in_thread(text)` | Slack `postThreadReply` | Same as post_review | Needs the review thread. Not refused after an unknown outcome |
+| `approve_account()` | ReviewAPI `approve`, then a thread reply with the outcome (see [Decisions](#decisions)) | The thread reply is the connector write, with the same cap as post_review; as a best-effort confirmation it gets one attempt (see [Sends and resends](#sends-and-resends)) | See [Decisions](#decisions) |
 | `reject_account(reason)` | ReviewAPI `reject` the same way, then `Rejected <name> (<email>): <reason>.` or `Rejection failed: <error>.` | Same as approve_account | Same as approve_account |
-| `send_welcome_email()` | Gmail `sendMessage` of the **latest posted draft** to the applicant, then a thread reply with the outcome (see [The welcome email](#the-welcome-email)) | `non_idempotent_write`, one tool Step. Manifest: `limited`, `maxSends` 3. App cap: 1. The outcome reply is a second Slack call capped at 1 | The account is active and a draft is posted. Refused with `the welcome email for draft <n> was already sent in this review` when the session's records hold a send of that draft that did not definitely fail |
+| `send_welcome_email()` | Gmail `sendMessage` of the **latest posted draft** to the applicant, then a thread reply with the outcome (see [The welcome email](#the-welcome-email)) | `non_idempotent_write`, one tool Step. Manifest: `limited`, `maxSends` 3; the app keeps that cap. The outcome reply is a second Slack call with Slack's cap, posted once the send's outcome is final | The account is active and a draft is posted. Refused with `the welcome email for draft <n> was already sent in this review` after a send of that draft succeeded, and with `… may already have been sent in this review` when one stayed unknown after the cap |
 | `finish_review()` | Asks its own session to complete (a session never ends on its own): `Client.stopFlow` with `StopType.GRACEFUL_COMPLETE`. The rest of the turn runs, its result and the final assistant message are stored, and the session Flow closes `COMPLETED` (see [Ending a review](#ending-a-review)) | `idempotent_write` | The account is no longer pending |
 
 No tool asks for Dex tool approval (`requiresApproval: false`), and no tool checks the reviewers' replies: the
@@ -55,7 +55,9 @@ tool records (see [Session records](#session-records)).
 
 approve_account, reject_account and send_welcome_email post their outcome in the thread from the tool's code,
 whether it worked or not, so the admins never depend on the model to report it. That post is best effort: when it
-fails, the tool logs a warning and its result stays the same.
+is not confirmed, the tool logs a warning, and a successful result adds `"confirmationPosted": false`, so the model
+posts the outcome itself with reply_in_thread. A failed or unknown result is never changed; the model's one-line
+summary at the end of the review reports it.
 
 Slack text from the applicant or the model is escaped, and the email shows in a code block exactly as it is sent.
 
@@ -71,50 +73,69 @@ mention anyone, and is cut with `…` past its limit.
 ## Sends and resends
 
 The Slack and Gmail tools are Dex connector tools from
-[`@superdurable/connector-slack`](https://www.npmjs.com/package/@superdurable/connector-slack) 0.7.0 and
-[`@superdurable/connector-google-gmail`](https://www.npmjs.com/package/@superdurable/connector-google-gmail) 0.3.0.
-Each call is one connector call in its own Dex tool Step, under the connector's call identity and single-dispatch
-fence. approve_account and reject_account are Slack `postThreadReply` tools: the ReviewAPI decision runs first in
-the same Step, and the thread reply is the tool's connector call. send_welcome_email makes its outcome reply as a
-second connector call in its Step, under that call's own identity and fence.
+[`@superdurable/connector-slack`](https://www.npmjs.com/package/@superdurable/connector-slack) 0.8.0 and
+[`@superdurable/connector-google-gmail`](https://www.npmjs.com/package/@superdurable/connector-google-gmail) 0.4.0,
+both built on `@superdurable/connectors-sdk` 0.11.0. Each call is one connector call in its own Dex tool Step,
+under the connector's call identity and single-dispatch fence. approve_account and reject_account are Slack
+`postThreadReply` tools: the ReviewAPI decision runs first in the same Step, and the thread reply is the tool's
+connector call. send_welcome_email makes its outcome reply as a second connector call in its Step, under that
+call's own identity and fence.
 
-**What the connectors declare.** Each connector operation declares a resend tier in its manifest
-(`dex-connector.json`, `agent.repeatOnUnknown`):
+**What the connectors declare.** Slack `postChannelMessage` and `postThreadReply` and Gmail `sendMessage` declare
+`agent.repeatOnUnknown: limited` with `maxSends: 3` in their manifests, and the connector code passes that cap to
+the fence. The app keeps it: `signupConnectorToolPolicies` in [`src/signup-agent.ts`](../src/signup-agent.ts) sets
+only `requiresApproval: false` for the six connector tools, in both harnesses, so Dex Agents pins the declared cap
+of 3 in each call's reference and hands it to the connector on every attempt. send_welcome_email's outcome reply is
+a plain `createCall`, so it has Slack's cap too.
 
-- `safe`: repeating is harmless, so the Step is simply retried.
-- `limited`: after an unknown outcome (a timeout, a 5xx, a crash during the send), the connector reads back where
-  it can, and otherwise resends while the possible sends stay below `maxSends`.
-- `unsafe`: the connector reads back only and never resends.
+**What happens after an unknown outcome.** An unknown outcome (a timeout, a 5xx, a lost answer, a crash during the
+send) below the cap makes the connector ask for a retry, and the tool Step runs again under the same call identity.
+On that attempt the connector reads back first: Slack looks up the checkpointed message `ts` and never resends a
+post it finds; Gmail searches Sent Mail for the message's Message-ID. Only when the read-back cannot confirm the
+earlier send does it resend: Slack with the same `client_msg_id`, Gmail with the same Message-ID. A definite failure
+(`providerRejected`, a refused request) is never resent. The text a tool builds before the dispatch is built again
+on each attempt from the same records; post_draft's footer follows the account's status at that attempt.
 
-A definite failure is never resent, in any tier. Slack 0.7.0 (`postChannelMessage`, `postThreadReply`) and Gmail
-0.3.0 (`sendMessage`) declare `limited` with `maxSends: 3`.
+**After the cap.** When the possible sends reach 3 and the read-back still cannot confirm one, the operation selects
+`uncertain` and Dex records the call `outcome_unknown`; the model gets Dex's unknown-outcome text and the
+connector's failure. Then:
 
-**What actually happens in these versions.** The released connector code does not yet pass the cap to the SDK
-fence: both create it as `newFence(call, 30_000)` without a `maxSends` option, and the fence then treats the
-operation as capped at one send. So these versions send at most once, whatever the manifest says.
+- post_review: the review may be in the channel. The tool refuses every later post_review, and the prompt tells the
+  model never to call it again.
+- send_welcome_email: the tool posts `Sending the welcome email failed: <error>. Check Sent Mail; if nothing went
+  out, send it manually.` when it can (see below), and refuses every later send of that draft with `… may already
+  have been sent in this review`. The admins check Sent Mail.
+- post_draft and reply_in_thread: the post may be in the thread. The tools do not refuse a later call: a duplicate
+  thread note is harmless, and an unconfirmed draft is never what send_welcome_email sends, since the latest draft
+  counts only from a succeeded post. The prompt tells the model not to post it again in that turn, and later only
+  when the admins ask.
+- approve_account and reject_account: their thread reply is only the confirmation; see below.
 
-**What the app adds.** The app caps every send at one on top of that:
+**Why some refusals remain.** A new tool call is a new call identity, and its fence knows nothing of the old call's
+sends, so it would post or send again with a new `client_msg_id` or Message-ID. So the tools still refuse a new
+call where a duplicate is worse than asking an admin: a second review post (post_review) and a second welcome email
+(send_welcome_email). The other refusals guard other rules and are unchanged: post_review once a review is posted,
+the welcome email once per draft after a success, the same draft twice, and the decision tools' idempotency through
+the ReviewAPI expected revision and request ID (see [Decisions](#decisions)).
 
-- `signupConnectorToolPolicies` in [`src/signup-agent.ts`](../src/signup-agent.ts) sets `maxSends: 1` for all six
-  connector tools, in both harnesses.
-- `singleSendCall` creates send_welcome_email's outcome reply with `maxSendsOverride: 1`, since that call is made
-  by the tool itself, outside the session's tool policies.
-- The tools refuse to send again after an unknown outcome: post_review refuses once a post may have gone out, and
-  send_welcome_email refuses once a send of the draft did not definitely fail. Both assume at most one send.
+**Confirmations get one attempt.** The thread reply of approve_account and reject_account, and send_welcome_email's
+outcome reply, are best effort: when one asks for a retry, the tool does not run its Step again for it, since that
+would repeat the decision or the send check before it. send_welcome_email posts its outcome only once Gmail's outcome
+is final, never on a retry: the tool Step keeps one checkpoint, which the email's fence needs on the next attempt.
+For the same reason, an outcome reply in a later attempt of the Step finds the email's checkpoint, fails closed and
+is not posted. A successful result then says `"confirmationPosted": false`, and the model posts the outcome.
 
-The reason is that a provider error after the dispatch does not prove that nothing went out. A second welcome email
-or a second review post is worse than asking an admin to check, which is why the send failure reply points to Sent
-Mail.
-
-A follow-up will move to Slack 0.8.0 and Gmail 0.4.0, which really resend under `limited`, and drop the app's cap
-and the guards that assume one send.
+**Deployment constraint.** The cap may go above 1 only when every Worker of the session Flow type runs Dex Agents
+0.6.12 or newer, which pins a call's cap and gives its tool Step the attempts to reach it. This app pins 0.6.14 (as
+[Ending a review](#ending-a-review) already requires), so no Worker of the session Flow type may run an older Dex
+Agents.
 
 ## Duplicates and fencing
 
 Several layers keep a write from happening twice:
 
-- **Connector writes.** The single-dispatch fence above: a Step retried after a crash reads back instead of
-  sending again.
+- **Connector writes.** The single-dispatch fence above: a Step retried after a crash or an unknown outcome reads
+  back first, and resends only while the call's sends stay below 3.
 - **Review sessions.** The watcher starts each session with FlowID `signup-review-<accountId>`, Request ID
   `<accountId>` and an ID reuse policy that rejects used IDs. Starting again joins the same run: one review per
   account, ever.
@@ -176,9 +197,9 @@ continues.` (or `Rejection outcome unknown: …`) and throws `ToolOutcomeUnknown
 `outcome_unknown` and never retries it. The model is told the outcome is unknown and, per the prompt, does not call
 the tool again unless an admin asks. An admin's next `approve` or `send` reads the account and goes on.
 
-For a connector write, Dex records `outcome_unknown` when the connector cannot prove the request did not go out
-(the fence's read-back, a lost answer). post_review then refuses for good, and send_welcome_email treats the draft as
-sent.
+For a connector write, Dex records `outcome_unknown` when the connector's read-back and resends up to the cap of 3
+still cannot confirm the write (see [Sends and resends](#sends-and-resends)). post_review then refuses for good, and
+send_welcome_email treats the draft as possibly sent.
 
 ## The welcome email
 
@@ -188,8 +209,12 @@ send_welcome_email sends the latest posted draft and replies in the thread:
 - When Gmail conclusively rejects the message (`providerRejected`): `Sending the welcome email failed: <reason>.
   Nothing was sent.` The tool throws, so the call is recorded as a definite failure, and the tool would not refuse a
   later send of this draft. The prompt still tells the model not to call it again after a failure.
-- For any outcome Gmail leaves unknown: `Sending the welcome email failed: <error>. Check Sent Mail; if nothing went
-  out, send it manually.` The call is recorded as `outcome_unknown`, and the draft counts as sent.
+- An unknown outcome below the cap posts nothing yet: the Step's next attempt reads back Sent Mail and resends only
+  when the message is not there.
+- For an outcome Gmail leaves unknown after the cap: `Sending the welcome email failed: <error>. Check Sent Mail; if
+  nothing went out, send it manually.` The call is recorded as `outcome_unknown`, and the draft counts as possibly
+  sent. In a later attempt of the Step this reply fails closed (see [Sends and resends](#sends-and-resends)); the
+  model's summary then reports the outcome.
 
 ## Reply routing and the Trigger
 

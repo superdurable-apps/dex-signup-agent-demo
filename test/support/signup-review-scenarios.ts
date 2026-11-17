@@ -9,8 +9,8 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import test from "node:test";
 
-import { GmailMock, sendMessageBranch } from "@superdurable/connector-google-gmail/mock";
-import { GeneratedMock, postThreadReplyUncertain } from "@superdurable/connector-slack/mock";
+import { GmailMock, sendMessageBranch, sendMessageRetry } from "@superdurable/connector-google-gmail/mock";
+import { GeneratedMock, postChannelMessageRetry, postThreadReplyRetry, postThreadReplyUncertain } from "@superdurable/connector-slack/mock";
 import { TriggerDeliveryAbortedError, newTriggerContext } from "@superdurable/connectors-sdk";
 import type { LoadedProject } from "@superdurable/connectors-sdk/projectconfig";
 import { Client, Registry, TimeTravelType, Worker, openBlobCache, type BlobCache } from "@superdurable/dex";
@@ -404,6 +404,86 @@ export function registerSignupReviewScenarios(setup: SignupReviewScenarioSetup):
     await replyAndWait(sessionId, thread, "approve");
     assert.equal(reviewApi.accountOf(accountId)?.status, "active");
     assert.match((await resultsOf(sessionId, "approve_account")).at(-1) ?? "", /"status":"approved"/);
+  });
+
+  // The connector mocks answer each attempt from the script and keep no fence: these scenarios show that an unknown
+  // outcome below the cap runs the tool Step again under the same call identity and ends with one result. The
+  // read-back and resend decisions themselves are the connectors' fence, which test/signup-agent.test.ts checks.
+  test(`${setup.harnessName}: a review post whose first attempt has an unknown outcome is sent again by the Step retry under the same call, once`, async () => {
+    const failed = failure("postChannelMessage", "Slack message outcome is unknown");
+    // The next review post of any session, which is this one: startReview names its session only when it starts it.
+    slack.postChannelMessage().respond(postChannelMessageRetry(failed, 0));
+    const { accountId, sessionId } = await startReview("retrypost", 1710000700);
+    const posts = slack.postChannelMessage().calls().filter((call) => call.flowId === sessionId);
+    assert.equal(posts.length, 2);
+    assert.equal(posts[0]!.retry, true);
+    assert.equal(posts[1]!.callId, posts[0]!.callId);
+    assert.equal(posts[1]!.idempotencyKey, posts[0]!.idempotencyKey);
+    const results = await resultsOf(sessionId, "post_review");
+    assert.equal(results.length, 1);
+    assert.match(results[0]!, /"thread":\{"ts":/);
+    assert.notEqual((await services.sessions.review(accountId)).thread, undefined);
+  });
+
+  test(`${setup.harnessName}: a draft whose first attempt has an unknown outcome is posted by the Step retry under the same call`, async () => {
+    const { accountId, sessionId, thread } = await startReview("retrydraft", 1710000710);
+    slack.postThreadReply().forFlow(sessionId).respond(postThreadReplyRetry(failure("postThreadReply", "Slack message outcome is unknown"), 0));
+    await replyAndWait(sessionId, thread, "Shorter");
+    const posts = slack.postThreadReply().calls().filter((call) => call.flowId === sessionId);
+    assert.equal(posts.length, 2);
+    assert.equal(posts[1]!.callId, posts[0]!.callId);
+    assert.equal(posts[1]!.input.text, posts[0]!.input.text);
+    assert.equal((await resultsOf(sessionId, "post_draft")).length, 1);
+    assert.equal((await services.sessions.review(accountId)).latestDraft?.number, 2);
+  });
+
+  test(`${setup.harnessName}: a draft whose outcome stays unknown may be posted again later, and is never the draft sent`, async () => {
+    const { accountId, sessionId, thread } = await startReview("unknowndraft", 1710000720);
+    slack
+      .postThreadReply()
+      .forFlow(sessionId)
+      .respond(postThreadReplyUncertain({ message: { channelId, timestamp: "", threadTimestamp: thread.rootTs, userId: botUserId, text: "" } }, failure("postThreadReply", "lost")));
+    await replyAndWait(sessionId, thread, "Shorter");
+    assert.match((await resultsOf(sessionId, "post_draft")).at(-1) ?? "", /outcome (is )?unknown/);
+    assert.equal((await services.sessions.review(accountId)).latestDraft?.number, 1);
+    // Not refused as the same draft: the unknown post is no record of a draft.
+    await replyAndWait(sessionId, thread, "Shorter");
+    assert.match((await resultsOf(sessionId, "post_draft")).at(-1) ?? "", /"draft":\{"number":2\}/);
+    assert.equal((await services.sessions.review(accountId)).latestDraft?.number, 2);
+  });
+
+  test(`${setup.harnessName}: a send whose first attempt Gmail asks to retry is sent by the Step retry, and confirmed once`, async () => {
+    const { sessionId, thread } = await startReview("retrysend", 1710000730);
+    await replyAndWait(sessionId, thread, "approve");
+    gmail
+      .sendMessage()
+      .forFlow(sessionId)
+      .respond(sendMessageRetry({ kind: "AVAILABILITY", provider: "google", operation: "sendMessage", message: "Gmail send outcome is unknown" }, 0), sent("gmail-retried"));
+    await replyAndWait(sessionId, thread, "send");
+    const sends = sendsOf(sessionId);
+    assert.equal(sends.length, 2);
+    assert.equal(sends[1]!.callId, sends[0]!.callId);
+    assert.equal(sends[1]!.idempotencyKey, sends[0]!.idempotencyKey);
+    // Nothing is posted while the outcome is open: no failure note, and the success once.
+    assert.ok(!threadReplies(sessionId).some((text) => text.startsWith("Sending the welcome email failed")));
+    assert.equal(threadReplies(sessionId).filter((text) => text.startsWith("Sent the welcome email")).length, 1);
+    assert.match((await resultsOf(sessionId, "send_welcome_email")).at(-1) ?? "", /gmail-retried/);
+    await waitForEnd(sessionId);
+  });
+
+  test(`${setup.harnessName}: a send whose outcome stays unknown after the cap is refused when asked again`, async () => {
+    const { sessionId, thread } = await startReview(stayAfterSendWord, 1710000740);
+    await replyAndWait(sessionId, thread, "approve");
+    gmail
+      .sendMessage()
+      .forFlow(sessionId)
+      .respond(sendMessageBranch("defect", { sender: "", recipients: [], messageId: "", threadId: "" }, { kind: "TRANSPORT", provider: "google", operation: "sendMessage", message: "connection reset" }));
+    await replyAndWait(sessionId, thread, "send");
+    assert.match((await resultsOf(sessionId, "send_welcome_email")).at(-1) ?? "", /outcome (is )?unknown/);
+    // A new call is a new call identity whose fence knows nothing of the first send, so the tool refuses it.
+    await replyAndWait(sessionId, thread, "send");
+    assert.equal(sendsOf(sessionId).length, 1);
+    assert.match((await resultsOf(sessionId, "send_welcome_email")).at(-1) ?? "", /refused: the welcome email for draft 1 may already have been sent in this review/);
   });
 
   test(`${setup.harnessName}: a rejected sign-up is rejected with the reason in the thread and gets no email`, async () => {
