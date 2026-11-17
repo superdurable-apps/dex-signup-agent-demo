@@ -10,7 +10,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import test from "node:test";
 
 import { GmailMock, sendMessageBranch, sendMessageRetry } from "@superdurable/connector-google-gmail/mock";
-import { GeneratedMock, postChannelMessageRetry, postThreadReplyRetry, postThreadReplyUncertain } from "@superdurable/connector-slack/mock";
+import { GeneratedMock, postChannelMessageRetry, postThreadReplyProviderRejected, postThreadReplyRetry, postThreadReplyUncertain } from "@superdurable/connector-slack/mock";
 import { TriggerDeliveryAbortedError, newTriggerContext } from "@superdurable/connectors-sdk";
 import type { LoadedProject } from "@superdurable/connectors-sdk/projectconfig";
 import { Client, Registry, TimeTravelType, Worker, openBlobCache, type BlobCache } from "@superdurable/dex";
@@ -381,7 +381,8 @@ export function registerSignupReviewScenarios(setup: SignupReviewScenarioSetup):
     await replyAndWait(sessionId, thread, "send");
     assert.equal(sendsOf(sessionId).length, 1);
     assert.match((await resultsOf(sessionId, "send_welcome_email")).at(-1) ?? "", /refused: the welcome email for draft 1 was already sent in this review/);
-    assert.equal(threadReplies(sessionId).filter((text) => text.startsWith("Sent the welcome email")).length, 1);
+    // send_welcome_email posts nothing itself, and the turn failed before the model's note.
+    assert.equal(threadReplies(sessionId).filter((text) => /welcome email/i.test(text)).length, 0);
   });
 
   test(`${setup.harnessName}: time travel of the session to before the send sends it again`, async () => {
@@ -405,8 +406,20 @@ export function registerSignupReviewScenarios(setup: SignupReviewScenarioSetup):
     assert.equal(reviewApi.accountOf(accountId)?.status, "active");
     const result = (await resultsOf(sessionId, "approve_account")).at(-1) ?? "";
     assert.match(result, /"status":"approved"/);
-    // The model is told the confirmation is missing, so it posts the outcome itself.
-    assert.match(result, /"confirmationPosted":false/);
+    // The note may be in the thread, so the model is told it is unknown, not that it is missing.
+    assert.match(result, /"confirmation":"unknown"/);
+  });
+
+  test(`${setup.harnessName}: a confirmation Slack rejects is reported as not posted`, async () => {
+    const { accountId, sessionId, thread } = await startReview("rejectedpost", 1710000252);
+    slack
+      .postThreadReply()
+      .forFlow(sessionId)
+      .respond(postThreadReplyProviderRejected({ message: { channelId, timestamp: "", threadTimestamp: thread.rootTs, userId: botUserId, text: "" } }, failure("postThreadReply", "not_in_channel")));
+    await replyAndWait(sessionId, thread, "approve");
+    assert.equal(reviewApi.accountOf(accountId)?.status, "active");
+    // Nothing went out, so the model may post the outcome itself.
+    assert.match((await resultsOf(sessionId, "approve_account")).at(-1) ?? "", /"confirmation":"notPosted"/);
   });
 
   // The connector mocks answer each attempt from the script and keep no fence: these scenarios show that an unknown
@@ -455,8 +468,8 @@ export function registerSignupReviewScenarios(setup: SignupReviewScenarioSetup):
     assert.equal((await services.sessions.review(accountId)).latestDraft?.number, 2);
   });
 
-  test(`${setup.harnessName}: a send whose first attempt Gmail asks to retry is sent by the Step retry, and confirmed once`, async () => {
-    const { sessionId, thread } = await startReview("retrysend", 1710000730);
+  test(`${setup.harnessName}: a send whose first attempt Gmail asks to retry is sent by the Step retry, and the model notes it once`, async () => {
+    const { accountId, sessionId, thread } = await startReview("retrysend", 1710000730);
     await replyAndWait(sessionId, thread, "approve");
     gmail
       .sendMessage()
@@ -467,11 +480,11 @@ export function registerSignupReviewScenarios(setup: SignupReviewScenarioSetup):
     assert.equal(sends.length, 2);
     assert.equal(sends[1]!.callId, sends[0]!.callId);
     assert.equal(sends[1]!.idempotencyKey, sends[0]!.idempotencyKey);
-    // Nothing is posted while the outcome is open: no failure note. The success is posted once here only because the
-    // mocks keep no fence; in production the reply in the Step's second attempt finds the email's checkpoint, fails
-    // closed, and the result says confirmationPosted: false.
-    assert.ok(!threadReplies(sessionId).some((text) => text.startsWith("Sending the welcome email failed")));
-    assert.equal(threadReplies(sessionId).filter((text) => text.startsWith("Sent the welcome email")).length, 1);
+    // The tool posts nothing; the model's one note, in its own tool Step, gives the final outcome.
+    assert.deepEqual(
+      threadReplies(sessionId).filter((text) => /welcome email/i.test(text)),
+      [`Sent the welcome email to ${reviewApi.accountOf(accountId)!.email}.`],
+    );
     assert.match((await resultsOf(sessionId, "send_welcome_email")).at(-1) ?? "", /gmail-retried/);
     await waitForEnd(sessionId);
   });
@@ -519,7 +532,13 @@ export function registerSignupReviewScenarios(setup: SignupReviewScenarioSetup):
       .respond(sendMessageBranch("defect", { sender: "", recipients: [], messageId: "", threadId: "" }, { kind: "TRANSPORT", provider: "google", operation: "sendMessage", message: "connection reset" }));
     await replyAndWait(sessionId, thread, "send");
     assert.equal(sendsOf(sessionId).length, 1);
-    assert.ok(threadReplies(sessionId).includes("Sending the welcome email failed: connection reset. Check Sent Mail; if nothing went out, send it manually."));
+    // The tool posts nothing. The model gets Dex's unknown-outcome text and, as the prompt says, sends the admins to
+    // Sent Mail in its one note.
+    assert.match((await resultsOf(sessionId, "send_welcome_email")).at(-1) ?? "", /outcome is unknown/);
+    assert.deepEqual(
+      threadReplies(sessionId).filter((text) => /welcome email/i.test(text)),
+      ["The welcome email's outcome is unknown: it may have gone out. Check Sent Mail before sending it by hand."],
+    );
     await waitForEnd(sessionId);
   });
 

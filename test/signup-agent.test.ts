@@ -1,39 +1,23 @@
-// The send caps of the connector tools: the app keeps each connector's declared bounded resend, and the connector
-// write a tool makes itself in its Step, checked against the Connector SDK's own single-dispatch fence.
+// The send caps of the connector tools: the app keeps each connector's declared bounded resend. The connectors' fence
+// behaviour itself is in test/connector-fences.test.ts.
 
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import gmailManifest from "@superdurable/connector-google-gmail/dex-connector.json" with { type: "json" };
 import { GmailMock } from "@superdurable/connector-google-gmail/mock";
-import { PostThreadReplyDefinition } from "@superdurable/connector-slack";
 import slackManifest from "@superdurable/connector-slack/dex-connector.json" with { type: "json" };
 import { GeneratedMock } from "@superdurable/connector-slack/mock";
-import { createCall, definitionMaxSends, type ConnectionRef } from "@superdurable/connectors-sdk";
-import { Fence } from "@superdurable/connectors-sdk/singledispatch";
 import type { AgentToolCall, AgentTurnContext } from "@superdurable/dex-agents";
 import type { ConnectorToolSource } from "@superdurable/dex-agents/connectors";
-import type { AsyncContext } from "@superdurable/dex";
 
-import { createSignupConnectorTools, signupConnectorToolPolicies, type SignupServices } from "../src/signup-agent.ts";
+import { confirmationStateOf, createSignupConnectorTools, signupConnectorToolPolicies, type SignupServices } from "../src/signup-agent.ts";
 
-const connection: ConnectionRef = { provider: "slack", name: "review-slack" };
 const connectorTools = ["post_review", "post_draft", "reply_in_thread", "approve_account", "reject_account", "send_welcome_email"];
 
 /** The cap a manifest declares for `operationId`. */
 const declaredCap = (manifest: unknown, operationId: string): unknown =>
   (manifest as { factories: { operationId?: string; agent?: { maxSends?: unknown } }[] }).factories.find((entry) => entry.operationId === operationId)?.agent?.maxSends;
-
-/** A second attempt of a Step whose first attempt left `marker` as its checkpoint. */
-function retryContext(marker: () => unknown): AsyncContext {
-  return {
-    flowId: "signup-review-acct1",
-    stepExecutionId: "step-1",
-    attempt: 2,
-    hasLastHeartbeatValue: () => true,
-    getLastHeartbeatValue: () => marker(),
-  } as unknown as AsyncContext;
-}
 
 test("the connector tools' session policies set no send cap, only no approval", () => {
   assert.deepEqual(Object.keys(signupConnectorToolPolicies).sort(), [...connectorTools].sort());
@@ -62,22 +46,13 @@ test("each connector tool call carries the connector's declared cap of 3", () =>
   }
 });
 
-test("send_welcome_email's outcome reply has Slack's declared cap: after its own unknown send it may read back and resend", () => {
-  const operation = PostThreadReplyDefinition.operation;
-  const slackCap = definitionMaxSends(PostThreadReplyDefinition);
-  assert.equal(slackCap, 3);
-  let callId = "";
-  const reply = createCall(retryContext(() => ({ callId, attempt: 1, state: "claimed", sendCount: 1 })), connection, operation);
-  callId = reply.id;
-  assert.equal(reply.maxSendsOverride, undefined);
-  assert.equal(new Fence(reply, 30_000, { maxSends: slackCap }).decide().kind, "readBackThenResendAllowed");
-});
-
-test("an outcome reply in a later attempt of send_welcome_email's Step finds the email's checkpoint and fails closed", () => {
-  // The Step keeps one checkpoint: after the email's send in attempt 1, it is the Gmail call's marker. That is why the
-  // tool posts nothing on a Gmail retry, and why a reply in a later attempt is not posted (confirmationPosted: false).
-  const gmailCall = createCall(retryContext(() => undefined), { provider: "gmail", name: "welcome-gmail" }, { connectorId: "gmail", operationId: "sendMessage" });
-  const reply = createCall(retryContext(() => ({ callId: gmailCall.id, attempt: 1, state: "claimed", providerId: "m-1", sendCount: 1 })), connection, PostThreadReplyDefinition.operation);
-  assert.notEqual(reply.id, gmailCall.id);
-  assert.equal(new Fence(reply, 30_000, { maxSends: definitionMaxSends(PostThreadReplyDefinition) }).decide().kind, "failClosed");
+test("a decision tool's note is posted, not posted, or unknown, from the Slack attempt", () => {
+  const failure = { kind: "TRANSPORT", provider: "slack", operation: "postThreadReply", message: "x" };
+  assert.equal(confirmationStateOf({ kind: "branch", branch: "sent" }), "posted");
+  // Slack selects these only when nothing of the call went out.
+  assert.equal(confirmationStateOf({ kind: "branch", branch: "providerRejected", failure }), "notPosted");
+  assert.equal(confirmationStateOf({ kind: "branch", branch: "defect", failure }), "notPosted");
+  // A retry may follow a lost answer, and an uncertain post may be in the thread.
+  assert.equal(confirmationStateOf({ kind: "retry", failure }), "unknown");
+  assert.equal(confirmationStateOf({ kind: "uncertain", branch: "uncertain", failure }), "unknown");
 });

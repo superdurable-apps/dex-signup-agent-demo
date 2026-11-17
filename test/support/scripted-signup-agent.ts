@@ -27,6 +27,21 @@ export const failAfterSendWord = "failaftersend";
 /** Applicants whose email contains this word make the model only send on `send`, and keep the review open. */
 export const stayAfterSendWord = "stayaftersend";
 
+/** The model's note of a send_welcome_email result, or `undefined` for a refusal. */
+export function sendOutcomeNote(output: string, email: string): string | undefined {
+  if (output.includes("refused: ")) {
+    return undefined;
+  }
+  if (output.includes('"messageId"')) {
+    return `Sent the welcome email to ${email}.`;
+  }
+  const rejected = /send_welcome_email failed and nothing was sent: (.*)$/.exec(output)?.[1];
+  if (rejected !== undefined) {
+    return `Sending the welcome email failed: ${rejected}. Nothing was sent.`;
+  }
+  return "The welcome email's outcome is unknown: it may have gone out. Check Sent Mail before sending it by hand.";
+}
+
 /** Runs each response of `plan` in turn, skipping the calls already made since the user message, then answers. */
 function follow(plan: readonly ScriptedStep[], seen: readonly SeenResult[]): ScriptedStep {
   let made = 0;
@@ -84,15 +99,17 @@ export function decideNextStep(userTexts: readonly string[], seen: readonly Seen
     return follow([tool("reject_account", { reason: slack!.trim().slice("reject ".length) }), ...(isRejected ? [tool("reply_in_thread", { text: "Review done: rejected." }), tool("finish_review")] : [])], seen);
   }
   if (reply === "send" && (email.includes(failAfterSendWord) || email.includes(stayAfterSendWord))) {
+    // Only the send, so it stays the latest single-attempt tool Step.
     if (email.includes(failAfterSendWord) && sameReplies === 1 && seen.length >= 1) {
       return { kind: "fail" };
     }
     return follow([tool("send_welcome_email")], seen);
   }
   if (reply === "send") {
-    const isSent = seen[0]?.output.includes("messageId") === true;
-    const isRefused = seen[0]?.output.includes("refused: ") === true;
-    return follow([tool("send_welcome_email"), ...(isRefused ? [] : [tool("reply_in_thread", { text: isSent ? "Review done: approved and welcomed." : "Review done: approved; the email may not have gone out." }), tool("finish_review")])], seen);
+    // As the prompt says: send_welcome_email posts nothing, so one note with its outcome, the review's summary,
+    // follows every call that is not a refusal.
+    const note = sendOutcomeNote(seen[0]?.output ?? "", email);
+    return follow([tool("send_welcome_email"), ...(note === undefined ? [] : [tool("reply_in_thread", { text: note }), tool("finish_review")])], seen);
   }
   if (reply === "hold") {
     return { kind: "answer", text: "Holding." };
