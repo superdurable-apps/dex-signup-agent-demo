@@ -90,10 +90,15 @@ a plain `createCall`, so it has Slack's cap too.
 
 **What happens after an unknown outcome.** An unknown outcome (a timeout, a 5xx, a lost answer, a crash during the
 send) below the cap makes the connector ask for a retry, and the tool Step runs again under the same call identity.
-On that attempt the connector reads back first: Slack looks up the checkpointed message `ts` and never resends a
-post it finds; Gmail searches Sent Mail for the message's Message-ID. Only when the read-back cannot confirm the
-earlier send does it resend: Slack with the same `client_msg_id`, Gmail with the same Message-ID. A definite failure
-(`providerRejected`, a refused request) is never resent. The text a tool builds before the dispatch is built again
+On that attempt each connector decides from its checkpoint:
+
+- Slack: when the earlier attempt checkpointed the message's `ts`, the post went out; Slack reads it back and never
+  resends it (a read-back that does not find it selects `uncertain`). Without a `ts`, Slack resends with the same
+  `client_msg_id` while the sends stay below the cap.
+- Gmail: it first searches Sent Mail for the message's Message-ID, which every attempt shares. A message found there
+  is the send; only when none is found does it resend, with the same Message-ID, while the sends stay below the cap.
+
+A definite failure (`providerRejected`, a refused request) is never resent. The text a tool builds before the dispatch is built again
 on each attempt from the same records; post_draft's footer follows the account's status at that attempt.
 
 **After the cap.** When the possible sends reach 3 and the read-back still cannot confirm one, the operation selects
@@ -213,8 +218,9 @@ send_welcome_email sends the latest posted draft and replies in the thread:
   when the message is not there.
 - For an outcome Gmail leaves unknown after the cap: `Sending the welcome email failed: <error>. Check Sent Mail; if
   nothing went out, send it manually.` The call is recorded as `outcome_unknown`, and the draft counts as possibly
-  sent. In a later attempt of the Step this reply fails closed (see [Sends and resends](#sends-and-resends)); the
-  model's summary then reports the outcome.
+  sent. Reaching the cap takes several attempts, so this reply usually finds the email's checkpoint and fails closed
+  (see [Sends and resends](#sends-and-resends)); the prompt has the model's closing summary say that the email may
+  have gone out and that the admins check Sent Mail before sending it by hand.
 
 ## Reply routing and the Trigger
 

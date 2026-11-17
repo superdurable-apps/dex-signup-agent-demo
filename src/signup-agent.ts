@@ -31,7 +31,7 @@ Procedure:
    - Handle each "[slack <ts>]" message at most once: a message whose ts you have already seen is a repeat; ignore it. An admin may repeat a request with a new message, such as after a turn of yours failed: handle it, and the tools tell you when the write already happened.
    - When you mention a draft, mean the latest one, and never number drafts in your own text: the tools number them.
    A tool that refuses tells you why; explain it briefly with reply_in_thread when it helps the admins. Be concise.
-5. When the email was sent or its send failed, the account was rejected, or a tool reports that the account was decided in Dex Cloud admin, post a one-line summary with reply_in_thread, then call finish_review last: the session completes when that turn ends. After it, call no more tools and end your turn with a short final message.`;
+5. When send_welcome_email's outcome is unknown, its own note may be missing from the thread: your summary then says that the email may have gone out and that the admins check Sent Mail before sending it by hand. When the email was sent or its send failed, the account was rejected, or a tool reports that the account was decided in Dex Cloud admin, post a one-line summary with reply_in_thread, then call finish_review last: the session completes when that turn ends. After it, call no more tools and end your turn with a short final message.`;
 
 /** The first message of a review session: the applicant's sign-up data, as data. */
 export function firstReviewMessage(account: Account): string {

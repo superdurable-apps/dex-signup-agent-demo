@@ -403,7 +403,10 @@ export function registerSignupReviewScenarios(setup: SignupReviewScenarioSetup):
       .respond(postThreadReplyUncertain({ message: { channelId, timestamp: "", threadTimestamp: thread.rootTs, userId: botUserId, text: "" } }, failure("postThreadReply", "lost")));
     await replyAndWait(sessionId, thread, "approve");
     assert.equal(reviewApi.accountOf(accountId)?.status, "active");
-    assert.match((await resultsOf(sessionId, "approve_account")).at(-1) ?? "", /"status":"approved"/);
+    const result = (await resultsOf(sessionId, "approve_account")).at(-1) ?? "";
+    assert.match(result, /"status":"approved"/);
+    // The model is told the confirmation is missing, so it posts the outcome itself.
+    assert.match(result, /"confirmationPosted":false/);
   });
 
   // The connector mocks answer each attempt from the script and keep no fence: these scenarios show that an unknown
@@ -464,7 +467,9 @@ export function registerSignupReviewScenarios(setup: SignupReviewScenarioSetup):
     assert.equal(sends.length, 2);
     assert.equal(sends[1]!.callId, sends[0]!.callId);
     assert.equal(sends[1]!.idempotencyKey, sends[0]!.idempotencyKey);
-    // Nothing is posted while the outcome is open: no failure note, and the success once.
+    // Nothing is posted while the outcome is open: no failure note. The success is posted once here only because the
+    // mocks keep no fence; in production the reply in the Step's second attempt finds the email's checkpoint, fails
+    // closed, and the result says confirmationPosted: false.
     assert.ok(!threadReplies(sessionId).some((text) => text.startsWith("Sending the welcome email failed")));
     assert.equal(threadReplies(sessionId).filter((text) => text.startsWith("Sent the welcome email")).length, 1);
     assert.match((await resultsOf(sessionId, "send_welcome_email")).at(-1) ?? "", /gmail-retried/);
