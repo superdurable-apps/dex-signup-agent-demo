@@ -370,7 +370,8 @@ for (const apiKey of ["sk-custom", "sk-ant-oat01-custom"]) {
 }
 
 // dex-app.yaml's application.requiredOneOf is what Setup and Publish check; each of its groups, set alone, must be a
-// model the application starts with, so a publish that passes the check never crashes at start.
+// model the application starts with, so a publish that passes the check never lacks the model settings. The
+// requirement cannot see conflicts, so a conflicting combination passes it and the application still refuses it.
 test("each group of the manifest's Model requirement alone configures a model, and no group means none", () => {
   const manifest = parse(readFileSync(new URL("../dex-app.yaml", import.meta.url), "utf8")) as {
     application: { environment: { name: string; required?: boolean; secret?: boolean; minLength?: number }[]; requiredOneOf: { label: string; groups: string[][] }[] };
@@ -390,4 +391,7 @@ test("each group of the manifest's Model requirement alone configures a model, a
     assert.doesNotThrow(() => configOf(environmentOf), `group ${group.join(", ")}`);
   }
   assert.throws(() => configOf({}), /ANTHROPIC_API_KEY is required/);
+  // These satisfy the Anthropic group but conflict; the application refuses them at start with what to fix.
+  assert.throws(() => configOf({ ANTHROPIC_API_KEY: "sk-ant", SIGNUP_AGENT_PI_BASE_URL: "https://llm.example.com/v1" }), /SIGNUP_AGENT_PI_MODEL is required with SIGNUP_AGENT_PI_BASE_URL/);
+  assert.throws(() => configOf({ ANTHROPIC_API_KEY: "sk-ant", SIGNUP_AGENT_PI_PROTOCOL: "openai" }), /SIGNUP_AGENT_PI_PROTOCOL applies only to a custom endpoint/);
 });

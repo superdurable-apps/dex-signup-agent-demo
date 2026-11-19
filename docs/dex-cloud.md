@@ -75,7 +75,9 @@ The model settings are each optional in the manifest, because which ones are nee
 declares them with `application.requiredOneOf`: one group of the requirement `Model` must be fully set, either
 `SIGNUP_AGENT_PI_BASE_URL`, `SIGNUP_AGENT_PI_MODEL` and `SIGNUP_AGENT_PI_API_KEY`, or `ANTHROPIC_API_KEY`. Without
 one, Setup shows the `ENVIRONMENT_ONE_OF_REQUIRED` gap and Publish is blocked, instead of the application crashing at
-start. The code takes the endpoint when `SIGNUP_AGENT_PI_BASE_URL` is set, else the Anthropic key. Use one of these
+start. The requirement only checks that one group is set: a conflicting combination, such as `ANTHROPIC_API_KEY` with
+part of the endpoint group or with `SIGNUP_AGENT_PI_PROTOCOL`, passes Setup and the processes still refuse to start
+with it. The code takes the endpoint when `SIGNUP_AGENT_PI_BASE_URL` is set, else the Anthropic key. Use one of these
 combinations:
 
 | Model | Set |
