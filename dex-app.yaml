@@ -21,6 +21,7 @@ application:
     # The key for an anthropic/... SIGNUP_AGENT_PI_MODEL, the default model.
     - name: ANTHROPIC_API_KEY
       secret: true
+      minLength: 1
     # An RFC 3339 time: only sign-ups registered since then are reviewed.
     - name: SIGNUP_REVIEW_SINCE
       required: true
@@ -29,15 +30,26 @@ application:
     - name: SIGNUP_AGENT_HARNESS
       enum: [pi]
     - name: SIGNUP_AGENT_PI_MODEL
+      minLength: 1
     # An OpenAI- or Anthropic-compatible endpoint instead of Anthropic's API.
     - name: SIGNUP_AGENT_PI_BASE_URL
+      minLength: 1
     - name: SIGNUP_AGENT_PI_PROTOCOL
       enum: [openai, anthropic]
     - name: SIGNUP_AGENT_PI_API_KEY
       secret: true
+      minLength: 1
     - name: SIGNUP_WATCH_INTERVAL_SECONDS
     - name: GITHUB_TOKEN
       secret: true
+  # The model settings: one group must be complete, so a publish without them is blocked in Setup instead of
+  # the application crashing at start. The code takes the endpoint group when SIGNUP_AGENT_PI_BASE_URL is set,
+  # else the Anthropic key (src/config.ts piModelSelection).
+  requiredOneOf:
+    - label: Model
+      groups:
+        - [SIGNUP_AGENT_PI_BASE_URL, SIGNUP_AGENT_PI_MODEL, SIGNUP_AGENT_PI_API_KEY]
+        - [ANTHROPIC_API_KEY]
 # The committed pi session graph; make session-graphs writes it.
 flowDefinitions:
   - sourcePath: flow-definitions/signup-review-pi-agent.json
