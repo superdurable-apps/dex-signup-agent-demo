@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf16"
-	"unicode/utf8"
 )
 
 // jsWhitespaceClass is JavaScript's \s: white space and line terminators.
@@ -67,9 +66,6 @@ func utf16Length(text string) int {
 	}
 	return length
 }
-
-// codePointLength is [...text].length.
-func codePointLength(text string) int { return utf8.RuneCountInString(text) }
 
 // jsJSONString is JSON.stringify of one string.
 func jsJSONString(text string) string {

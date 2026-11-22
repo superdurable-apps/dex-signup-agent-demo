@@ -119,7 +119,8 @@ type connectorTool struct {
 	attempt     func(ctx context.Context, sessionID string, arguments map[string]any, invoke func(input any) (ConnectorOutcome, error)) (connectorResult, error)
 }
 
-// beforeDispatch runs the checks before a dispatch: a failure there is definite, since nothing was sent.
+// beforeDispatch runs the checks before a dispatch: a failure there sent nothing in this attempt. It is definite
+// unless an earlier attempt of the Step may have sent, which signupMutation.refused checks.
 func beforeDispatch(err error) error {
 	var toolError *dexagents.ToolExecutionError
 	if err == nil || errors.As(err, &toolError) {
@@ -161,8 +162,10 @@ func isTransientReviewAPIError(err error) bool {
 	return errors.As(err, &transport) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// decisionRetryDelay is the wait before the next try of a decision; tests shorten it.
-var decisionRetryDelay = func(attempt int) time.Duration { return time.Duration(500*attempt) * time.Millisecond }
+// decisionRetryDelay is the wait before the next try of a decision: 0.5 s, then 1 s.
+func decisionRetryDelay(attempt int) time.Duration {
+	return time.Duration(500*attempt) * time.Millisecond
+}
 
 // withRetries runs work again after a busy or unreachable ReviewAPI, up to 3 times: decisions carry stable request IDs.
 func withRetries(ctx context.Context, work func() (Account, error)) (Account, error) {

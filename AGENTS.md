@@ -19,7 +19,9 @@ README gives the overview and the local run; `docs/design.md` describes the desi
 6. `eino/`: the Eino harness, a Go module that ports `src/` file by file (`eino/internal/signup`), with its own
    scenario suite and crash tests (`eino/scenarios`). A change to the prompt, a tool, the reply routing or the
    watcher changes both: copy `signupAgentPrompt` into `eino/internal/signup/prompt.txt` (a test fails while they
-   differ), and port the change to the Go file of the same name.
+   differ), and port the change to the Go file of the same name. The connector tools of `createSignupConnectorTools`
+   (their checks, texts, schemas and descriptions) are in `connector_tools.go`, and `connector_binding.go` runs them
+   as connector operations; no test compares them with the TypeScript tools.
 
 The session Flow's graph is committed, not rendered: dex-app.yaml declares
 `flow-definitions/signup-review-pi-agent.json`. When the Flow type or permission changes, or after a

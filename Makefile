@@ -41,7 +41,8 @@ test: restored
 # The Eino harness (eino/, Go, local only): run-eino builds and runs its local process with .env; test-eino runs its
 # unit tests, scenario suite and crash tests on private Dex engines of DEXCLI with the dex-server-zd beside it
 # (graceful completion needs dexcli 1.47.9 or later, with server-zd 0.1.34), not test-app's DEX_SERVER_ZD_BINARY;
-# EINO_DEX_SERVER_ZD_BINARY names another one. RUN selects tests by name, as a go test -run regular expression.
+# EINO_DEX_SERVER_ZD_BINARY names another one. RUN selects tests by name, as a go test -run regular expression. A
+# relative path in DEXCLI or EINO_DEX_SERVER_ZD_BINARY is relative to where make runs, since the tests run in eino/.
 DEXCLI ?= $(shell command -v dexcli)
 export DEXCLI
 EINO_DEX_SERVER_ZD_BINARY ?=
@@ -49,4 +50,5 @@ run-eino:
 	cd eino && GOWORK=off go build -o ../.local/bin/signup-eino ./cmd/signup-eino
 	SIGNUP_AGENT_HARNESS=eino ./.local/bin/signup-eino
 test-eino:
-	cd eino && GOWORK=off go vet ./... && DEX_SERVER_ZD_BINARY='$(EINO_DEX_SERVER_ZD_BINARY)' GOWORK=off go test -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)') ./...
+	cd eino && GOWORK=off go vet ./... && DEXCLI='$(abspath $(DEXCLI))' DEX_SERVER_ZD_BINARY='$(abspath $(EINO_DEX_SERVER_ZD_BINARY))' \
+		GOWORK=off go test -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)') ./...

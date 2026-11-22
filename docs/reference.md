@@ -73,13 +73,14 @@ message that says what to set.
   `SIGNUP_AGENT_EINO_PROTOCOL` is `openai` unless set to `anthropic`. The base URL is an http(s) URL with a host and no
   query or fragment.
   - `openai` (eino-ext `components/model/openai`): the base URL is the part before `/chat/completions` (such as
-    `https://llm.example.com/v1`), and the key goes as a Bearer token.
+    `https://llm.example.com/v1`), and the key goes as a Bearer token. Reasoning the endpoint returns as
+    `reasoning_content` is not sent back in later requests.
   - `anthropic` (eino-ext `components/model/claude`): the base URL is the part before `/v1/messages` (such as
     `https://llm.example.com/anthropic`), and the key goes as `x-api-key`; no `Authorization` header is sent, so an
     `ANTHROPIC_AUTH_TOKEN` of the shell never reaches the endpoint. The Anthropic Go SDK under eino-ext retries a failed
     request twice inside the model call, and eino-ext offers no option to turn that off.
 - The model is the endpoint's model ID as it is, slashes included; the pi prefix `openai-compatible/` is refused.
-- Both protocols ask for at most 16,384 output tokens.
+- Both protocols ask for at most 16,384 output tokens. A turn makes at most 100 model calls, as under pi.
 
 ## Commands
 
@@ -97,7 +98,7 @@ message that says what to set.
 | `make session-graphs` | Writes both harnesses' session graphs with the reply Trigger binding |
 | `node . web`, `node . worker` | The two hosted processes; `node .` with no mode is the local process |
 | `make run-eino` | Builds `eino/cmd/signup-eino` into `.local/bin/` and runs it with `.env`: the Eino harness's local process (Worker, watcher and reply Trigger) |
-| `make test-eino [RUN=<regexp>]` | The Eino harness's tests (`eino/`): unit tests, the scenario suite and the crash tests. `DEXCLI` names the `dexcli` (1.47.9 or later) that starts their private engines, with the `dex-server-zd` beside it; `EINO_DEX_SERVER_ZD_BINARY` names another one. A server older than server-zd 0.1.34 refuses finish_review's graceful completion, and the tests that end a review say so |
+| `make test-eino [RUN=<regexp>]` | The Eino harness's tests (`eino/`): unit tests, the scenario suite and the crash tests. `DEXCLI` names the `dexcli` (1.47.9 or later) that starts their private engines, with the `dex-server-zd` beside it; `EINO_DEX_SERVER_ZD_BINARY` names another one. A relative path in either is relative to the repository root. A server older than server-zd 0.1.34 refuses finish_review's graceful completion, and the tests that end a review say so |
 
 `make bootstrap`, `make check-fdg-v2` and `make check-static` need Go, the version of
 [`tools/appmanifest/go.mod`](../tools/appmanifest/go.mod) or later. Python has no YAML parser, so
@@ -182,7 +183,9 @@ Scenarios:
   `test/profile-sources.test.ts`, `test/signup-agent.test.ts`, `test/signup-answers.test.ts` and
   `test/connector-fences.test.ts` (the released Go Slack and Gmail operations with the real fence over a fake
   transport and sdkgo's fake Step context), plus the Eino model rules and endpoints, the connector tools over the
-  connector mocks, and a test that fails when `prompt.txt` differs from `signupAgentPrompt` in `src/signup-agent.ts`.
+  connector mocks and, through the Go connector tool source on the real connectors, a refusal on a retried attempt
+  after a possible send, and a test that fails when `prompt.txt` differs from `signupAgentPrompt` in
+  `src/signup-agent.ts`. `eino/cmd/signup-eino` checks that `.env` reads as Node's `--env-file` reads it.
 - The scenario suite (`eino/scenarios`) ports `test/support/signup-review-scenarios.ts` scenario by scenario, with
   the same names and assertions, on a private Dex engine: a scripted Eino `ToolCallingChatModel` over the same
   `decideNextStep`, the Go Slack and Gmail mocks, the ReviewAPI stub, and reviewer replies as Slack Events API

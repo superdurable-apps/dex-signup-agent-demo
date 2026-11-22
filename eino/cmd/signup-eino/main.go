@@ -1,11 +1,10 @@
 // Command signup-eino is the local process of the Eino harness: the Dex Worker of the session Flow
 // SignupReviewEinoAgentFlow, the sign-up watcher and the Slack reply Trigger on Socket Mode, as npm start runs them
 // for the TypeScript harnesses. It reads .env from the working directory into a copy of its environment, and stops on
-// SIGTERM and SIGINT, the Worker after draining its tasks.
+// SIGTERM and SIGINT, the Worker after draining its tasks; a second signal ends it at once.
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -36,36 +35,16 @@ func main() {
 }
 
 // environment is the process environment with .env applied: a variable already set wins, as Node's
-// --env-file-if-exists does. Nothing is written back to the process environment.
+// --env-file-if-exists does, and .env reads as Node reads it (parseDotEnv). Nothing is written back to the process
+// environment.
 func environment(path string) (map[string]string, error) {
 	values := map[string]string{}
-	file, err := os.Open(path)
+	contents, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	if err == nil {
-		defer file.Close()
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			name, value, found := strings.Cut(strings.TrimPrefix(line, "export "), "=")
-			if !found {
-				continue
-			}
-			value = strings.TrimSpace(value)
-			if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
-				value = value[1 : len(value)-1]
-			} else if index := strings.Index(value, " #"); index >= 0 {
-				value = strings.TrimSpace(value[:index])
-			}
-			values[strings.TrimSpace(name)] = value
-		}
-		if err := scanner.Err(); err != nil {
-			return nil, err
-		}
+		values = parseDotEnv(string(contents))
 	}
 	for _, entry := range os.Environ() {
 		if name, value, found := strings.Cut(entry, "="); found {
@@ -101,7 +80,7 @@ func dexClientOptions(config signup.Config) (dex.ClientOptions, dex.WorkerOption
 }
 
 func run() error {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	ctx, stop := stopSignalContext(context.Background())
 	defer stop()
 	values, err := environment(".env")
 	if err != nil {
@@ -189,4 +168,21 @@ func httpClientTrusting(caFile string) (*http.Client, error) {
 		return nil, errors.New("DEX_TOKEN_CA_FILE holds no PEM certificate")
 	}
 	return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}}}, nil
+}
+
+// stopSignalContext is cancelled by the first SIGTERM or SIGINT. The signals have their default action again before
+// it is done, so a second Ctrl+C while the Worker drains ends the process at once, as a second Ctrl+C ends npm start.
+func stopSignalContext(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		select {
+		case <-signals:
+		case <-ctx.Done():
+		}
+		signal.Stop(signals)
+		cancel()
+	}()
+	return ctx, cancel
 }

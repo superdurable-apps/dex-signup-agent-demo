@@ -9,6 +9,7 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	gmail "github.com/superdurable/dex-connectors-library/connectors/google/gmail/go"
 	slack "github.com/superdurable/dex-connectors-library/connectors/slack/go"
@@ -48,12 +49,21 @@ func NewEinoSignupAgent(services *Services, slackConnection slack.Connection, gm
 		requiresApproval := false
 		policies[tool.Name] = dexagents.ToolPolicy{Effect: tool.Effect, RequiresApproval: &requiresApproval}
 	}
-	config := &adk.ChatModelAgentConfig{
-		Name:        "signup-review",
-		Description: "Reviews Dex Cloud sign-ups with the admins in Slack.",
-		Instruction: SignupAgentPrompt,
-		Model:       chatModel,
-		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools}},
+	return dexeino.NewAgentSessionFlow(signupAgentConfig(chatModel, tools), EinoSessionFlowType, dexeino.WithToolPolicies(policies), dexeino.WithToolSources(source))
+}
+
+// einoMaxModelCallsPerTurn is the most model calls of one turn, the pi harness's limit (the Dex built-in loop's
+// default). Eino's own default MaxIterations is 20; the adapter ends a turn that reaches it as failed.
+const einoMaxModelCallsPerTurn = 100
+
+// signupAgentConfig is the ChatModelAgent of the session: the prompt, the model, the plain tools and the turn limit.
+func signupAgentConfig(chatModel model.ToolCallingChatModel, tools []tool.BaseTool) *adk.ChatModelAgentConfig {
+	return &adk.ChatModelAgentConfig{
+		Name:          "signup-review",
+		Description:   "Reviews Dex Cloud sign-ups with the admins in Slack.",
+		Instruction:   SignupAgentPrompt,
+		Model:         chatModel,
+		ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools}},
+		MaxIterations: einoMaxModelCallsPerTurn,
 	}
-	return dexeino.NewAgentSessionFlow(config, EinoSessionFlowType, dexeino.WithToolPolicies(policies), dexeino.WithToolSources(source))
 }

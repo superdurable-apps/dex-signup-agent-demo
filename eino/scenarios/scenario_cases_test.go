@@ -147,14 +147,15 @@ func (current *suite) sameEventTwice(t *testing.T) {
 	current.waitForIdle(t, sessionID, turns)
 	equal(t, current.drafts(sessionID), 1)
 	// Slack sends the event again, as after a lost acknowledgement. The reply target sends it with the request ID of its
-	// event ID, so Dex applies it once; the agent would ignore a ts it already saw anyway.
+	// event ID, so Dex applies it once; the agent would ignore a ts it already saw anyway. (The TypeScript suite allows
+	// two, from a time its target sent no request ID.)
 	before := current.events.Acknowledged()
 	current.events.Push(reply.Message, reply.EventID)
 	current.pollUntil(t, "the repeat acknowledged", func() bool { return current.events.Acknowledged() > before })
 	time.Sleep(time.Second)
 	current.waitForIdle(t, sessionID, 0)
 	equal(t, current.drafts(sessionID), 1)
-	if count := countPrefix(current.userTexts(t, sessionID), "[slack "+reply.TS+"]"); count > 2 {
+	if count := countPrefix(current.userTexts(t, sessionID), "[slack "+reply.TS+"]"); count != 1 {
 		t.Fatalf("the reply reached the session %d times", count)
 	}
 }

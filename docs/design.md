@@ -363,10 +363,11 @@ Claude Code login (<code>SIGNUP_AGENT_CLAUDE_AUTH=login</code>), or <code>ANTHRO
 
 ```go
 dexeino.NewAgentSessionFlow(&adk.ChatModelAgentConfig{
-	Name:        "signup-review",
-	Instruction: SignupAgentPrompt, // an embedded copy of signupAgentPrompt
-	Model:       chatModel,         // eino-ext openai or claude, from SIGNUP_AGENT_EINO_*
-	ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools}},
+	Name:          "signup-review",
+	Instruction:   SignupAgentPrompt, // an embedded copy of signupAgentPrompt
+	Model:         chatModel,         // eino-ext openai or claude, from SIGNUP_AGENT_EINO_*
+	ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools}},
+	MaxIterations: 100, // model calls per turn, pi's limit; Eino's default is 20
 }, "SignupReviewEinoAgentFlow",
 	dexeino.WithToolPolicies(policies),       // the plain tools' effects; no tool asks for approval
 	dexeino.WithToolSources(connectorSource)) // the six connector tools, connectortools.NewConnectorToolSource
@@ -391,6 +392,11 @@ differs:
   its session with the request ID the TypeScript connector SDK derives from the event ID.
 - Each connector tool lists the connector's `defect` branch as an unknown outcome, as Dex Agents 0.6.14, which the
   TypeScript harnesses pin, records it; the Go connector tool source otherwise classifies by the branch's listing.
+- A tool's refusal or definite failure on a retried attempt of its tool Step, after an earlier attempt may have
+  sent (the Step's checkpoint holds a claim or a send of the call), is recorded `outcome_unknown`, as Dex Agents
+  0.6.14 records it. The Go connector tool source leaves this to the tool, so each tool reads the checkpoint as the
+  connector's fence does. Otherwise a check that fails on the retry, such as a ReviewAPI read while it is busy,
+  would tell the model that nothing was sent, and a new call could post the review or send the email again.
 - The Go Gmail connector selects `uncertain` once the third send's outcome stays unknown; either way Dex records
   `outcome_unknown`. The Go fence keeps one marker per call ID in a Step's checkpoint; the app still makes one fenced
   write per Step.

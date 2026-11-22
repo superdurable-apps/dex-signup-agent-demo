@@ -86,8 +86,7 @@ func (mutation signupMutation) failure(kind sdkgo.FailureKind, message string) *
 // Invoke runs one attempt of the tool.
 func (mutation signupMutation) Invoke(call sdkgo.Call, arguments map[string]any) sdkgo.MutationAttempt[json.RawMessage] {
 	if problems := mutation.tool.validate(arguments); len(problems) > 0 {
-		return sdkgo.NewMutationBranch[json.RawMessage](FailedBranch, nil,
-			mutation.failure(sdkgo.FailureValidation, fmt.Sprintf("invalid arguments for %s: %s", mutation.tool.name, joinProblems(problems))), sdkgo.Receipt{})
+		return mutation.refused(call.Context, sdkgo.FailureValidation, fmt.Sprintf("invalid arguments for %s: %s", mutation.tool.name, joinProblems(problems)))
 	}
 	write := func(input any) (ConnectorOutcome, error) { return mutation.write(call.Context, input, call.MaxSends()) }
 	result, err := mutation.tool.attempt(call.Context, call.Context.FlowID(), arguments, write)
@@ -100,7 +99,7 @@ func (mutation signupMutation) Invoke(call sdkgo.Call, arguments map[string]any)
 			if isRefusalText(toolError.Message) {
 				kind = sdkgo.FailureValidation
 			}
-			return sdkgo.NewMutationBranch[json.RawMessage](FailedBranch, nil, mutation.failure(kind, toolError.Message), sdkgo.Receipt{})
+			return mutation.refused(call.Context, kind, toolError.Message)
 		case errors.As(err, &unknown):
 			return sdkgo.NewMutationUncertain[json.RawMessage](nil, *mutation.failure(sdkgo.FailureAvailability, unknown.message), sdkgo.Receipt{})
 		default:
@@ -124,6 +123,75 @@ func (mutation signupMutation) Invoke(call sdkgo.Call, arguments map[string]any)
 		return sdkgo.NewMutationBranch[json.RawMessage](sdkgo.DefectBranchID, nil, mutation.failure(sdkgo.FailureLocalDefect, "the result does not encode as JSON"), sdkgo.Receipt{})
 	}
 	return sdkgo.NewMutationBranch(sentBranchOf(mutation.definition), json.RawMessage(value), nil, sdkgo.Receipt{})
+}
+
+// refused is the tool's own refusal or definite failure, with its text: the failed branch, or uncertain when an
+// earlier attempt of the tool Step may have sent the call's write. A retried attempt runs the tool's checks again
+// before its write, so a check that fails then, such as a ReviewAPI read while it is busy, says nothing about the
+// earlier attempt's send. Recorded as failed, the model would read that nothing was sent, and a new call, with a new
+// call identity whose fence knows none of the earlier sends, could post the review or send the email again. Dex
+// Agents 0.6.14, which the TypeScript harnesses run, records outcome_unknown in this case (hasEarlierSendCheckpoint);
+// the Go connector tool source leaves it to the tool.
+func (mutation signupMutation) refused(ctx dex.Context, kind sdkgo.FailureKind, message string) sdkgo.MutationAttempt[json.RawMessage] {
+	if mayHaveSentEarlier(ctx) {
+		return sdkgo.NewMutationUncertain[json.RawMessage](nil, *mutation.failure(kind, message+" (an earlier attempt of this call may have sent it)"), sdkgo.Receipt{})
+	}
+	return sdkgo.NewMutationBranch[json.RawMessage](FailedBranch, nil, mutation.failure(kind, message), sdkgo.Receipt{})
+}
+
+// mayHaveSentEarlier reports whether an earlier attempt of the tool Step may have sent the call's write, counted as
+// sdkgo's fence counts it from the checkpoint that attempt saved. The Step makes one fenced write, the wrapped call, so
+// every marker in it is that call's. Without a readable marker, each earlier attempt may have sent once. sdkgo keeps
+// the checkpoint format to itself and offers no such read, so a test on the real fences guards it.
+// WORKAROUND(dex-bugs.md#a-go-mutation-cannot-ask-whether-an-earlier-attempt-of-its-step-may-have-sent)
+func mayHaveSentEarlier(ctx dex.Context) bool {
+	attempt := float64(ctx.Attempt())
+	if attempt <= 1 {
+		return false
+	}
+	var checkpoint any
+	hasCheckpoint, err := ctx.GetLastHeartbeatValue(&checkpoint)
+	if err != nil || !hasCheckpoint {
+		return true
+	}
+	fields, _ := checkpoint.(map[string]any)
+	entries := []any{fields}
+	if markers, hasMarkers := fields["singleDispatchMarkers"].(map[string]any); hasMarkers {
+		// The current fence's checkpoint maps each Call ID to its marker; an older one is a single marker.
+		entries = entries[:0]
+		for _, marker := range markers {
+			entries = append(entries, marker)
+		}
+	}
+	hasMarker := false
+	for _, entry := range entries {
+		sends, isMarker := priorSendsOf(entry, attempt)
+		if isMarker && sends > 0 {
+			return true
+		}
+		hasMarker = hasMarker || isMarker
+	}
+	return !hasMarker
+}
+
+// priorSendsOf is the most sends a marker allows before attempt, as sdkgo's fence reads it: its send count, or one
+// per attempt up to its own (a claim's included) when it has none, plus one per attempt after it. It reports false
+// for an entry that is not a marker.
+func priorSendsOf(entry any, attempt float64) (float64, bool) {
+	marker, _ := entry.(map[string]any)
+	state, hasState := marker["state"].(string)
+	markerAttempt, hasAttempt := marker["attempt"].(float64)
+	if !hasState || !hasAttempt || markerAttempt < 1 {
+		return 0, false
+	}
+	sends, hasSendCount := marker["sendCount"].(float64)
+	if !hasSendCount {
+		sends = markerAttempt - 1
+		if state == "claimed" {
+			sends = markerAttempt
+		}
+	}
+	return sends + max(attempt-1-markerAttempt, 0), true
 }
 
 // isRefusalText reports a tool's own refusal: nothing was tried.

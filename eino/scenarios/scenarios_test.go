@@ -314,16 +314,6 @@ func (current *suite) threadReplies(sessionID string) []string {
 	return texts
 }
 
-func (current *suite) postsOf(sessionID string) []string {
-	var texts []string
-	for _, call := range current.slack.PostChannelMessage().Calls() {
-		if call.FlowID == sessionID {
-			texts = append(texts, call.Input.Text)
-		}
-	}
-	return texts
-}
-
 func (current *suite) sendsOf(sessionID string) []gmail.SendMessageInput {
 	var sends []gmail.SendMessageInput
 	for _, call := range current.gmail.SendMessage().Calls() {
@@ -398,7 +388,8 @@ func requireFinishAccepted(t *testing.T, snapshot dexagents.AgentSnapshot) {
 	t.Helper()
 	if failure := finishFailure(snapshot); failure != "" {
 		t.Fatalf("finish_review did not complete the session (%q): the Dex server refuses graceful completion; "+
-			"use dexcli 1.47.9 or later (server-zd 0.1.34) as DEXCLI and leave DEX_SERVER_ZD_BINARY unset", failure)
+			"use dexcli 1.47.9 or later (server-zd 0.1.34) as DEXCLI and leave DEX_SERVER_ZD_BINARY unset "+
+			"(EINO_DEX_SERVER_ZD_BINARY under make test-eino)", failure)
 	}
 }
 

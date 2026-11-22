@@ -97,3 +97,87 @@ func TestTheAnthropicProtocolPostsMessagesWithTheKeyAsXAPIKeyOnly(t *testing.T) 
 		}
 	}
 }
+
+// The openai protocol leaves the reasoning of earlier responses out of each request, as the pi harness does for a
+// custom endpoint: an OpenAI-compatible endpoint may reject reasoning_content in the messages it gets. The text, the
+// tool calls and the tool results stay.
+func TestTheOpenAIProtocolLeavesTheReasoningOfEarlierResponsesOutOfTheRequest(t *testing.T) {
+	var mutex sync.Mutex
+	var bodies []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		contents, _ := io.ReadAll(request.Body)
+		var body map[string]any
+		_ = json.Unmarshal(contents, &body)
+		mutex.Lock()
+		bodies = append(bodies, body)
+		mutex.Unlock()
+		if body["stream"] == true {
+			response.Header().Set("content-type", "text/event-stream")
+			_, _ = io.WriteString(response, `data: {"id":"c1","object":"chat.completion.chunk","model":"deepseek-reasoner","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"I think a lot"}}]}`+"\n\n"+
+				`data: {"id":"c1","object":"chat.completion.chunk","model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"done"},"finish_reason":"stop"}]}`+"\n\n"+"data: [DONE]\n\n")
+			return
+		}
+		response.Header().Set("content-type", "application/json")
+		_, _ = io.WriteString(response, `{"id":"c1","object":"chat.completion","model":"deepseek-reasoner","choices":[{"index":0,"message":{"role":"assistant","content":"done","reasoning_content":"I think a lot"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`)
+	}))
+	t.Cleanup(server.Close)
+	chatModel, err := signup.NewEinoChatModel(context.Background(), signup.EinoModelSelection{Protocol: signup.EinoProtocolOpenAI, ModelID: "deepseek-reasoner", BaseURL: server.URL + "/v1", APIKey: "sk-endpoint-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatModel, err = chatModel.WithTools([]*schema.ToolInfo{{Name: "github_user", Desc: "Look up a GitHub user."}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	earlier := &schema.Message{Role: schema.Assistant, Content: "Looking", ReasoningContent: "I think a lot",
+		ToolCalls: []schema.ToolCall{{ID: "call-1", Type: "function", Function: schema.FunctionCall{Name: "github_user", Arguments: `{"login":"ada"}`}}}}
+	history := []*schema.Message{schema.UserMessage("hi"), earlier, schema.ToolMessage(`{"login":"ada"}`, "call-1")}
+	for _, call := range []func() (*schema.Message, error){
+		func() (*schema.Message, error) { return chatModel.Generate(context.Background(), history) },
+		func() (*schema.Message, error) {
+			stream, err := chatModel.Stream(context.Background(), history)
+			if err != nil {
+				return nil, err
+			}
+			defer stream.Close()
+			var chunks []*schema.Message
+			for {
+				chunk, err := stream.Recv()
+				if err == io.EOF {
+					return schema.ConcatMessages(chunks)
+				}
+				if err != nil {
+					return nil, err
+				}
+				chunks = append(chunks, chunk)
+			}
+		},
+	} {
+		answer, err := call()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The session keeps the reasoning it got: only the request leaves it out.
+		if answer.ReasoningContent != "I think a lot" {
+			t.Fatalf("answer = %+v", answer)
+		}
+	}
+	if earlier.ReasoningContent != "I think a lot" {
+		t.Fatal("the stored message lost its reasoning")
+	}
+	mutex.Lock()
+	defer mutex.Unlock()
+	if len(bodies) != 2 {
+		t.Fatalf("requests = %d", len(bodies))
+	}
+	for _, body := range bodies {
+		messages := body["messages"].([]any)
+		assistant := messages[1].(map[string]any)
+		if _, has := assistant["reasoning_content"]; has || assistant["content"] != "Looking" || assistant["tool_calls"] == nil {
+			t.Fatalf("assistant message = %v", assistant)
+		}
+		if tool := messages[2].(map[string]any); tool["tool_call_id"] != "call-1" {
+			t.Fatalf("tool message = %v", tool)
+		}
+	}
+}
