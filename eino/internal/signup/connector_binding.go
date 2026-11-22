@@ -129,9 +129,11 @@ func (mutation signupMutation) Invoke(call sdkgo.Call, arguments map[string]any)
 // earlier attempt of the tool Step may have sent the call's write. A retried attempt runs the tool's checks again
 // before its write, so a check that fails then, such as a ReviewAPI read while it is busy, says nothing about the
 // earlier attempt's send. Recorded as failed, the model would read that nothing was sent, and a new call, with a new
-// call identity whose fence knows none of the earlier sends, could post the review or send the email again. Dex
-// Agents 0.6.14, which the TypeScript harnesses run, records outcome_unknown in this case (hasEarlierSendCheckpoint);
-// the Go connector tool source leaves it to the tool.
+// call identity whose fence knows none of the earlier sends, could post the review or send the email again. The Go
+// connector tool source leaves this to the tool, and mayHaveSentEarlier follows sdkgo's fence. That is stricter than
+// Dex Agents 0.6.14, which the TypeScript harnesses run (hasEarlierSendCheckpoint), in one case: a retried attempt
+// that finds no checkpoint. Dex stores checkpoints batched and lossy, so attempt 1 may have sent and lost its claim;
+// the fence then assumes each earlier attempt sent once, and the refusal is uncertain here, failed there.
 func (mutation signupMutation) refused(ctx dex.Context, kind sdkgo.FailureKind, message string) sdkgo.MutationAttempt[json.RawMessage] {
 	if mayHaveSentEarlier(ctx) {
 		return sdkgo.NewMutationUncertain[json.RawMessage](nil, *mutation.failure(kind, message+" (an earlier attempt of this call may have sent it)"), sdkgo.Receipt{})
@@ -141,7 +143,8 @@ func (mutation signupMutation) refused(ctx dex.Context, kind sdkgo.FailureKind, 
 
 // mayHaveSentEarlier reports whether an earlier attempt of the tool Step may have sent the call's write, counted as
 // sdkgo's fence counts it from the checkpoint that attempt saved. The Step makes one fenced write, the wrapped call, so
-// every marker in it is that call's. Without a readable marker, each earlier attempt may have sent once. sdkgo keeps
+// every marker in it is that call's. Without a readable marker, each earlier attempt may have sent once, as the fence
+// assumes: a missing checkpoint after attempt 1 proves nothing, since Dex may lose the latest one. sdkgo keeps
 // the checkpoint format to itself and offers no such read, so a test on the real fences guards it.
 // WORKAROUND(dex-bugs.md#a-go-mutation-cannot-ask-whether-an-earlier-attempt-of-its-step-may-have-sent)
 func mayHaveSentEarlier(ctx dex.Context) bool {

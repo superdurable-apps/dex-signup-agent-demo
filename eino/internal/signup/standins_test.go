@@ -1,7 +1,7 @@
 package signup_test
 
 // The provider stand-ins of the crash tests answer the real Go Slack and Gmail connectors: a post and its read-back,
-// a send whose answer is lost and its Sent Mail search by Message-ID.
+// a send whose answer is lost and its Sent Mail read-back by X-Dex-Message-ID, since Gmail replaces the Message-ID.
 
 import (
 	"context"
@@ -65,11 +65,18 @@ func TestTheProviderStandInsAnswerTheRealConnectors(t *testing.T) {
 	case first = <-done:
 		t.Fatalf("the send was not held: %+v %+v", first, first.Failure)
 	}
-	// The answer never came: the attempt searched Sent Mail by the message's Message-ID, found it, and never resent it.
+	// The answer never came: the attempt listed Sent Mail, found the copy by its X-Dex-Message-ID, and never resent it.
 	if kindOf(first) != "sent" {
 		t.Fatalf("a held send = %+v %+v", first, first.Failure)
 	}
-	if sends := gmailAPI.Sends(); len(sends) != 1 || sends[0].MessageID == "" || sends[0].To == "" {
+	sends := gmailAPI.Sends()
+	if len(sends) != 1 || sends[0].MessageID == "" || sends[0].To == "" || sends[0].DexMessageID != sends[0].MessageID || sends[0].SentMessageID == sends[0].MessageID {
 		t.Fatalf("sends = %+v", sends)
+	}
+	if searches := gmailAPI.Searches(); len(searches) == 0 || searches[0] != "in:sent newer_than:2d to:ada@example.com" {
+		t.Fatalf("searches = %q", searches)
+	}
+	if reads := gmailAPI.HeaderReads(); len(reads) == 0 || reads[len(reads)-1] != sends[0].GmailID {
+		t.Fatalf("header reads = %q", reads)
 	}
 }

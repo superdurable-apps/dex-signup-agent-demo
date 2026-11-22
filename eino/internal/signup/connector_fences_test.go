@@ -7,7 +7,6 @@ package signup_test
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -24,6 +23,7 @@ import (
 	"github.com/superdurable/dex-connectors-library/sdkgo/singledispatchtest"
 
 	"github.com/superdurable-apps/dex-signup-agent-demo/eino/internal/signup"
+	"github.com/superdurable-apps/dex-signup-agent-demo/eino/internal/signuptest"
 )
 
 var (
@@ -129,10 +129,57 @@ var (
 		return request.method == http.MethodPost && strings.Contains(request.url, "/messages/send")
 	}
 	isSentMailSearch = func(request recordedRequest) bool {
-		decoded, _ := url.QueryUnescape(request.url)
-		return request.method == http.MethodGet && strings.Contains(decoded, "rfc822msgid:")
+		target, _ := url.Parse(request.url)
+		return request.method == http.MethodGet && strings.HasSuffix(target.Path, "/users/me/messages")
+	}
+	isHeaderRead = func(request recordedRequest) bool {
+		target, _ := url.Parse(request.url)
+		return request.method == http.MethodGet && strings.Contains(target.Path, "/users/me/messages/") && target.Query().Get("format") == "metadata"
 	}
 )
+
+// gmailAnswer answers the Gmail connector as Gmail does over mailbox: send answers a messages.send request with the
+// message it carries; every other request reads the mailbox.
+func gmailAnswer(mailbox *signuptest.GmailMailbox, send func(raw string) (*http.Response, error)) func(recordedRequest) (*http.Response, error) {
+	return func(request recordedRequest) (*http.Response, error) {
+		if isGmailSend(request) {
+			raw, err := signuptest.DecodeSendBody(request.body)
+			if err != nil {
+				return jsonResponse(400, map[string]any{"error": map[string]any{"code": 400}}), nil
+			}
+			return send(raw)
+		}
+		target, err := url.Parse(request.url)
+		if err != nil {
+			return nil, err
+		}
+		status, body := mailbox.Answer(request.method, target)
+		return jsonResponse(status, body), nil
+	}
+}
+
+// accept is Gmail accepting a send: the message is in Sent Mail, under Gmail's own Message-ID.
+func accept(mailbox *signuptest.GmailMailbox) func(string) (*http.Response, error) {
+	return func(raw string) (*http.Response, error) {
+		return jsonResponse(200, signuptest.SendAnswer(mailbox.Send(raw))), nil
+	}
+}
+
+// requireReadBackByDexMessageID checks that every Sent Mail search listed candidates to the recipient, never by
+// Message-ID, and that Gmail had replaced the Message-ID of each Sent copy, so only X-Dex-Message-ID could match.
+func requireReadBackByDexMessageID(t *testing.T, mailbox *signuptest.GmailMailbox) {
+	t.Helper()
+	for _, query := range mailbox.Searches() {
+		if query != "in:sent newer_than:2d to:ada@example.com" {
+			t.Fatalf("a Sent Mail search is %q", query)
+		}
+	}
+	for _, send := range mailbox.Sends() {
+		if send.MessageID == "" || send.DexMessageID != send.MessageID || send.SentMessageID == send.MessageID {
+			t.Fatalf("the Sent copy does not model Gmail's Message-ID rewrite: %+v", send)
+		}
+	}
+}
 
 func TestSlackPostThreadReplySendsAtMost3TimesWithOneClientMsgIDWhenEachOutcomeIsUnknown(t *testing.T) {
 	provider := &fakeProvider{answer: func(recordedRequest) (*http.Response, error) {
@@ -229,29 +276,22 @@ func TestASlackNoteWhoseAnswerWasLostIsUnknownNotNotPosted(t *testing.T) {
 	}
 }
 
-func TestGmailReadsBackSentMailByTheSharedMessageIDBeforeItWouldResend(t *testing.T) {
-	isInSentMail := false
+func TestGmailReadsSentMailBackByXDexMessageIDBeforeItWouldResend(t *testing.T) {
+	mailbox := &signuptest.GmailMailbox{}
+	late := ""
 	provider := &fakeProvider{}
-	provider.answer = func(request recordedRequest) (*http.Response, error) {
-		switch {
-		case isGmailSend(request):
-			return jsonResponse(500, map[string]any{"error": map[string]any{"code": 500}}), nil
-		case isSentMailSearch(request):
-			if isInSentMail {
-				return jsonResponse(200, map[string]any{"messages": []any{map[string]any{"id": "m-1", "threadId": "t-1"}}}), nil
-			}
-			return jsonResponse(200, map[string]any{}), nil
-		default:
-			return jsonResponse(404, map[string]any{}), nil
-		}
-	}
+	provider.answer = gmailAnswer(mailbox, func(raw string) (*http.Response, error) {
+		late = raw
+		return jsonResponse(500, map[string]any{"error": map[string]any{"code": 500}}), nil
+	})
 	send := gmailOperations(t, provider).SendMessage()
 	step := singledispatchtest.NewContext("signup-review-acct1", "step-1")
 	if kind := kindOf(attemptOutcome(t, step, send, gmailConnection, emailInput)); kind != "retry" {
 		t.Fatalf("first attempt = %s", kind)
 	}
-	// The 500 lost the answer, but the message reached Sent Mail: the next attempt finds it there.
-	isInSentMail = true
+	// The 500 lost the answer, but the message reached Sent Mail after the attempt's read-back, with Gmail's own
+	// Message-ID: the next attempt finds it by its X-Dex-Message-ID.
+	mailbox.Send(late)
 	step.AdvanceAttempt()
 	second := attemptOutcome(t, step, send, gmailConnection, emailInput)
 	if kindOf(second) != "sent" {
@@ -259,33 +299,76 @@ func TestGmailReadsBackSentMailByTheSharedMessageIDBeforeItWouldResend(t *testin
 	}
 	var value gmail.SendMessageOutput
 	_ = json.Unmarshal(second.Value, &value)
-	if value.MessageID != "m-1" {
+	if value.MessageID != "gmail-1" {
 		t.Fatalf("message ID = %q", value.MessageID)
 	}
 	if sends := provider.matching(isGmailSend); len(sends) != 1 {
 		t.Fatalf("sends = %d", len(sends))
 	}
-	searched := map[string]bool{}
-	for _, request := range provider.matching(isSentMailSearch) {
-		decoded, _ := url.QueryUnescape(request.url)
-		searched[regexp.MustCompile(`rfc822msgid:(\S+)`).FindStringSubmatch(decoded)[1]] = true
+	if reads := provider.matching(isHeaderRead); len(reads) == 0 {
+		t.Fatal("no candidate's headers were read")
 	}
-	if len(searched) != 1 {
-		t.Fatalf("every search looks for the one Message-ID of the call: %v", searched)
-	}
+	requireReadBackByDexMessageID(t, mailbox)
 }
 
-func rawMessageIDOf(t *testing.T, request recordedRequest) string {
+// A Worker killed after Gmail accepted the send: Dex kept only the fence's claim as the Step's checkpoint. Attempt 2,
+// on a new Worker, finds the Sent copy by its X-Dex-Message-ID, since Gmail replaced its Message-ID, and sends no
+// second email.
+func TestAWorkerKilledAfterGmailAcceptedTheSendSendsNoSecondEmail(t *testing.T) {
+	mailbox := &signuptest.GmailMailbox{}
+	step := singledispatchtest.NewContext("signup-review-acct1", "step-1")
+	var claim []byte
+	killed := &fakeProvider{}
+	killed.answer = func(request recordedRequest) (*http.Response, error) {
+		if !isGmailSend(request) {
+			return nil, errors.New("the Worker is gone")
+		}
+		frames := step.Heartbeats()
+		claim = frames[len(frames)-1]
+		raw, err := signuptest.DecodeSendBody(request.body)
+		if err != nil {
+			t.Error(err)
+		}
+		mailbox.Send(raw)
+		return nil, errors.New("the Worker was killed after Gmail accepted the send")
+	}
+	// The attempt's outcome is lost with its Worker.
+	_, _ = signup.RunConnectorAttempt(step, gmailOperations(t, killed).SendMessage(), gmailConnection, emailInput, 3)
+	if !strings.Contains(string(claim), `"state":"claimed"`) {
+		t.Fatalf("the checkpoint at the send is not the fence's claim: %s", claim)
+	}
+	retried := singledispatchtest.NewContext("signup-review-acct1", "step-1")
+	retried.AdvanceAttempt()
+	if err := retried.SetPersistedCheckpoint(json.RawMessage(claim)); err != nil {
+		t.Fatal(err)
+	}
+	alive := &fakeProvider{}
+	alive.answer = gmailAnswer(mailbox, accept(mailbox))
+	second := attemptOutcome(t, retried, gmailOperations(t, alive).SendMessage(), gmailConnection, emailInput)
+	if kindOf(second) != "sent" {
+		t.Fatalf("attempt 2 = %s (%v)", kindOf(second), second.Failure)
+	}
+	var value gmail.SendMessageOutput
+	_ = json.Unmarshal(second.Value, &value)
+	if value.MessageID != "gmail-1" {
+		t.Fatalf("message ID = %q", value.MessageID)
+	}
+	if sends := alive.matching(isGmailSend); len(sends) != 0 {
+		t.Fatalf("attempt 2 sent the email again: %d sends", len(sends))
+	}
+	if sends := mailbox.Sends(); len(sends) != 1 {
+		t.Fatalf("Sent Mail holds %d copies", len(sends))
+	}
+	requireReadBackByDexMessageID(t, mailbox)
+}
+
+func rawHeaderOf(t *testing.T, request recordedRequest, name string) string {
 	t.Helper()
-	var body struct {
-		Raw string `json:"raw"`
-	}
-	_ = json.Unmarshal(request.body, &body)
-	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(body.Raw, "="))
+	raw, err := signuptest.DecodeSendBody(request.body)
 	if err != nil {
-		raw, _ = base64.URLEncoding.DecodeString(body.Raw)
+		t.Fatal(err)
 	}
-	match := regexp.MustCompile(`(?m)^Message-ID: (.*?)\r?$`).FindStringSubmatch(string(raw))
+	match := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(name) + `: (.*?)\r?$`).FindStringSubmatch(raw)
 	if match == nil {
 		return ""
 	}
@@ -293,16 +376,11 @@ func rawMessageIDOf(t *testing.T, request recordedRequest) string {
 }
 
 func TestGmailSendsAtMost3TimesSearchingSentMailBeforeEachResend(t *testing.T) {
-	provider := &fakeProvider{answer: func(request recordedRequest) (*http.Response, error) {
-		switch {
-		case isGmailSend(request):
-			return jsonResponse(500, map[string]any{"error": map[string]any{"code": 500}}), nil
-		case isSentMailSearch(request):
-			return jsonResponse(200, map[string]any{}), nil
-		default:
-			return jsonResponse(404, map[string]any{}), nil
-		}
-	}}
+	mailbox := &signuptest.GmailMailbox{}
+	provider := &fakeProvider{}
+	provider.answer = gmailAnswer(mailbox, func(string) (*http.Response, error) {
+		return jsonResponse(500, map[string]any{"error": map[string]any{"code": 500}}), nil
+	})
 	send := gmailOperations(t, provider).SendMessage()
 	step := singledispatchtest.NewContext("signup-review-acct1", "step-1")
 	var kinds []string
@@ -324,11 +402,17 @@ func TestGmailSendsAtMost3TimesSearchingSentMailBeforeEachResend(t *testing.T) {
 	}
 	ids := map[string]bool{}
 	for _, request := range sends {
-		ids[rawMessageIDOf(t, request)] = true
+		ids[rawHeaderOf(t, request, "Message-ID")+" "+rawHeaderOf(t, request, "X-Dex-Message-ID")] = true
 	}
-	if len(ids) != 1 || ids[""] {
-		t.Fatalf("every resend carries the same Message-ID: %v", ids)
+	for id := range ids {
+		if fields := strings.Fields(id); len(ids) != 1 || len(fields) != 2 || fields[0] != fields[1] {
+			t.Fatalf("every resend carries the same Message-ID, repeated in X-Dex-Message-ID: %v", ids)
+		}
 	}
+	if len(provider.matching(isSentMailSearch)) == 0 {
+		t.Fatal("no resend searched Sent Mail first")
+	}
+	requireReadBackByDexMessageID(t, mailbox)
 }
 
 func TestASendGmailRejectsIsADefiniteFailureAndIsNeverResent(t *testing.T) {
@@ -350,18 +434,12 @@ func TestASendGmailRejectsIsADefiniteFailureAndIsNeverResent(t *testing.T) {
 
 // dex-connectors-library#870: one fenced connector write per Step. In the TypeScript SDK a second fenced write takes
 // over the Step's one checkpoint, so the first write's retry fails closed. The Go fence keeps one marker per call ID
-// in the Step's checkpoint, so the email's retry still finds its own marker and reads Sent Mail back. The app makes
-// one fenced write per Step either way, which is why send_welcome_email posts no note.
+// in the Step's checkpoint, so the email's retry still finds its own marker and reads the message back by its Gmail
+// ID. The app makes one fenced write per Step either way, which is why send_welcome_email posts no note.
 func TestASecondFencedWriteInOneToolStepKeepsTheFirstWritesMarkerInGo(t *testing.T) {
-	gmailProvider := &fakeProvider{answer: func(request recordedRequest) (*http.Response, error) {
-		if isGmailSend(request) {
-			return jsonResponse(200, map[string]any{"id": "m-1", "threadId": "t-1"}), nil
-		}
-		if isSentMailSearch(request) {
-			return jsonResponse(200, map[string]any{"messages": []any{map[string]any{"id": "m-1", "threadId": "t-1"}}}), nil
-		}
-		return jsonResponse(404, map[string]any{}), nil
-	}}
+	mailbox := &signuptest.GmailMailbox{}
+	gmailProvider := &fakeProvider{}
+	gmailProvider.answer = gmailAnswer(mailbox, accept(mailbox))
 	slackProvider := &fakeProvider{answer: func(recordedRequest) (*http.Response, error) {
 		return jsonResponse(200, map[string]any{"ok": true, "channel": replyInput.ChannelID, "ts": "1710000100.000900", "message": map[string]any{"ts": "1710000100.000900", "text": replyInput.Text}}), nil
 	}}
@@ -384,7 +462,11 @@ func TestASecondFencedWriteInOneToolStepKeepsTheFirstWritesMarkerInGo(t *testing
 	if sends := gmailProvider.matching(isGmailSend); len(sends) != 1 {
 		t.Fatalf("the email was sent again: %d sends", len(sends))
 	}
-	if searches := gmailProvider.matching(isSentMailSearch); len(searches) != 1 {
+	// The retry read the message back by the Gmail ID its marker saved, with no Sent Mail search.
+	if reads := mailbox.HeaderReads(); len(reads) != 1 || reads[0] != "gmail-1" {
+		t.Fatalf("the email's retry read %v", reads)
+	}
+	if searches := gmailProvider.matching(isSentMailSearch); len(searches) != 0 {
 		t.Fatalf("the email's retry searched Sent Mail %d times", len(searches))
 	}
 }

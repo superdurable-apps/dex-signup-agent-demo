@@ -97,8 +97,8 @@ message that says what to set.
 | `make test-app [RUN=<regexp>]` | The app tests (`apptest/`), optionally selected by name |
 | `make session-graphs` | Writes both harnesses' session graphs with the reply Trigger binding |
 | `node . web`, `node . worker` | The two hosted processes; `node .` with no mode is the local process |
-| `make run-eino [EINO_DEX_CHECKOUT=<path>]` | Builds `eino/cmd/signup-eino` into `.local/bin/` and runs it with `.env`: the Eino harness's local process (Worker, watcher and reply Trigger). `EINO_DEX_CHECKOUT` names the Dex checkout it builds against (below) |
-| `make test-eino [RUN=<regexp>] [EINO_DEX_CHECKOUT=<path>]` | The Eino harness's tests (`eino/`): unit tests, the scenario suite and the crash tests, built against the Dex checkout of `EINO_DEX_CHECKOUT` (below). `DEXCLI` names the `dexcli` (1.47.9 or later) that starts their private engines, with the `dex-server-zd` beside it; `EINO_DEX_SERVER_ZD_BINARY` names another one. A relative path in either is relative to the repository root. A server older than server-zd 0.1.34 refuses finish_review's graceful completion, and the tests that end a review say so |
+| `make run-eino` | Builds `eino/cmd/signup-eino` into `.local/bin/` and runs it with `.env`: the Eino harness's local process (Worker, watcher and reply Trigger) |
+| `make test-eino [RUN=<regexp>]` | The Eino harness's tests (`eino/`): unit tests, the scenario suite and the crash tests. `DEXCLI` names the `dexcli` (1.47.9 or later) that starts their private engines, with the `dex-server-zd` beside it; `EINO_DEX_SERVER_ZD_BINARY` names another one. A relative path in either is relative to the repository root. A server older than server-zd 0.1.34 refuses finish_review's graceful completion, and the tests that end a review say so |
 
 `make bootstrap`, `make check-fdg-v2` and `make check-static` need Go, the version of
 [`tools/appmanifest/go.mod`](../tools/appmanifest/go.mod) or later. Python has no YAML parser, so
@@ -107,14 +107,19 @@ decoder: `go run -C tools/appmanifest . ../../dex-app.yaml` prints the canonical
 `npm test`, `make test-app` and `make session-graphs` do not read the manifest and need no Go. `make run-eino` and
 `make test-eino` need Go 1.26 or later.
 
-They also need the Dex Go modules `agents/go/core` and `agents/go/eino`, which Dex has not released yet, so for now
-the Eino harness builds only against a local Dex checkout that has both. [`eino/go.mod`](../eino/go.mod) replaces
-both modules with `.local/dex` (gitignored), and `make run-eino EINO_DEX_CHECKOUT=<path>` or
-`make test-eino EINO_DEX_CHECKOUT=<path>` links the checkout there; a relative path is relative to the repository
-root. Later runs, and `go` commands in `eino/`, use the link; without one, both targets stop and say what to set.
-`go.sum` pins no replaced module, so each run prints the checkout's commit (`-dirty` when it has uncommitted changes):
-a build repeats only from the same commit. After the Dex release, `eino/go.mod` requires the released versions and
-needs no checkout.
+The Eino harness builds from released Go modules only, which `go` downloads from the module proxy on the first
+build. [`eino/go.mod`](../eino/go.mod) requires:
+
+| Module | Version | What it is |
+| --- | --- | --- |
+| `github.com/superdurable/dex/agents/go/core` | 0.6.16 | Dex Agents for Go: the session Flow, tool policies and the Go connector tool source |
+| `github.com/superdurable/dex/agents/go/eino` | 0.6.16 | The Dex Eino adapter |
+| `github.com/superdurable/dex/sdk-go` | 1.45.6 | The Dex Go SDK |
+| `github.com/superdurable/dex-connectors-library/sdkgo` | 0.39.0 | The Go connector SDK and its dispatch fence |
+| `github.com/superdurable/dex-connectors-library/connectors/slack/go` | 1.8.1 | The Slack connector |
+| `github.com/superdurable/dex-connectors-library/connectors/google/gmail/go` | 0.29.1 | The Gmail connector; it reads a send back from Sent Mail by `X-Dex-Message-ID` |
+| `github.com/cloudwego/eino` | 0.9.23 | Eino and its ADK `ChatModelAgent` |
+| `github.com/cloudwego/eino-ext/components/model/openai`, `…/claude` | 0.1.13, 0.1.26 | The Eino model clients of the two protocols |
 
 ## Files
 
@@ -191,11 +196,12 @@ Scenarios:
 - Unit tests (`eino/internal/signup`) port `test/review-state.test.ts`, `test/review-replies.test.ts`,
   `test/profile-sources.test.ts`, `test/signup-agent.test.ts`, `test/signup-answers.test.ts` and
   `test/connector-fences.test.ts` (the released Go Slack and Gmail operations with the real fence over a fake
-  transport and sdkgo's fake Step context), plus the Eino model rules and endpoints, the connector tools over the
-  connector mocks and, through the Go connector tool source on the real connectors, a refusal on a retried attempt
-  after a possible send, and a test that fails when `prompt.txt` differs from `signupAgentPrompt` in
-  `src/signup-agent.ts`, and one that fails when `eino/go.mod` replaces a module with a directory outside
-  `.local/dex`. `eino/cmd/signup-eino` checks that `.env` reads as Node's `--env-file` reads it.
+  transport and sdkgo's fake Step context; the Gmail fake replaces the Message-ID of each Sent copy, as Gmail does),
+  plus a Worker killed after Gmail accepted the send, whose next attempt sends no second email. They also cover the
+  Eino model rules and endpoints, the connector tools over the connector mocks and, through the Go connector tool
+  source on the real connectors, a refusal on a retried attempt after a possible send or with no checkpoint, and a
+  test that fails when `prompt.txt` differs from `signupAgentPrompt` in `src/signup-agent.ts`.
+  `eino/cmd/signup-eino` checks that `.env` reads as Node's `--env-file` reads it.
 - The scenario suite (`eino/scenarios`) ports `test/support/signup-review-scenarios.ts` scenario by scenario, with
   the same names and assertions, on a private Dex engine: a scripted Eino `ToolCallingChatModel` over the same
   `decideNextStep`, the Go Slack and Gmail mocks, the ReviewAPI stub, and reviewer replies as Slack Events API
@@ -206,7 +212,8 @@ Scenarios:
   stand-ins, as the app test `TestReviewIsApprovedAndSentFromSlackReplies` does for pi.
 - Crash tests run the Worker as a child process on the real Slack and Gmail Go connectors against local provider
   stand-ins and SIGKILL it during a `RunModel`, after post_review's Slack post, and during send_welcome_email's Gmail
-  send. After the restart the review is posted once, the email is sent once, and the session completes.
+  send. After the restart the review is posted once, the email is sent once (found in Sent Mail by its
+  `X-Dex-Message-ID`), and the session completes.
 
 **Unit tests** (`test/`): the reply target's routing (filtered, delivered, dropped, retried for a recent thread,
 dropped for a disputed thread); the review records read from tool results and never from a turn note; the index

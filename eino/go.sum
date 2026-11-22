@@ -48,6 +48,8 @@ github.com/aws/smithy-go v1.27.3/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqx
 github.com/bahlo/generic-list-go v0.2.0 h1:5sz/EEAK+ls5wF+NeqDpk5+iNdMDXrh3z3nPnH1Wvgk=
 github.com/bahlo/generic-list-go v0.2.0/go.mod h1:2KvAjgMlE5NNynlg/5iLrrCCZ2+5xWbdbCW3pNTGyYg=
 github.com/bitly/go-simplejson v0.5.0/go.mod h1:cXHtHw4XUPsvGaxgjIAn8PhEWG9NfngEKAMDJEczWVA=
+github.com/bmatcuk/doublestar/v4 v4.10.0 h1:zU9WiOla1YA122oLM6i4EXvGW62DvKZVxIe6TYWexEs=
+github.com/bmatcuk/doublestar/v4 v4.10.0/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
 github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869/go.mod h1:Ekp36dRnpXw/yCqJaO+ZrUyxD+3VXMFFr56k5XYrpB4=
 github.com/buger/jsonparser v1.1.2 h1:frqHqw7otoVbk5M8LlE/L7HTnIq2v9RX6EJ48i9AxJk=
 github.com/buger/jsonparser v1.1.2/go.mod h1:6RYKKt7H4d4+iWqouImQ9R2FZql3VbhNgx27UK13J/0=
@@ -246,12 +248,16 @@ github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXl
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/superdurable/dex-connectors-library/connectors/google/gmail/go v0.29.0 h1:PwQDSk9TrPz7S6vxkqJk0eQwZhmcPz3RI6gYsnMJOlU=
-github.com/superdurable/dex-connectors-library/connectors/google/gmail/go v0.29.0/go.mod h1:uTeTfOuQmB3HcWNB+Q+ISFBJZdQOia3HWWk0hO1Hwd8=
+github.com/superdurable/dex-connectors-library/connectors/google/gmail/go v0.29.1 h1:uDatA8EPa9Xpt9lbA+xFrJVYJ0NZn20jLSRgfxZcl6c=
+github.com/superdurable/dex-connectors-library/connectors/google/gmail/go v0.29.1/go.mod h1:uTeTfOuQmB3HcWNB+Q+ISFBJZdQOia3HWWk0hO1Hwd8=
 github.com/superdurable/dex-connectors-library/connectors/slack/go v1.8.1 h1:7lVXIwro7FzWVfVXkxkN7/4ALhPIPGetFJGYCBVhgHY=
 github.com/superdurable/dex-connectors-library/connectors/slack/go v1.8.1/go.mod h1:EApz8bjav63IQZgHjotaj0u/jNpZ3yQrpWyT116yslI=
 github.com/superdurable/dex-connectors-library/sdkgo v0.39.0 h1:UuQf3VVLqlkptrm0zpXQu2tUikPUGNz8ftJ0STtZAbs=
 github.com/superdurable/dex-connectors-library/sdkgo v0.39.0/go.mod h1:zH3wYOhRcorzF7wGSrhz7V3zptvshZWufDEBReCayfM=
+github.com/superdurable/dex/agents/go/core v0.6.16 h1:h0y1OUfPeEoPtGPuDD29S1Rvh4cg8HMU7V0MZJWXcOI=
+github.com/superdurable/dex/agents/go/core v0.6.16/go.mod h1:1W4QlaTW0QU+HnPDXg9W/cDa4vClr+3nnS/uS8T7yL8=
+github.com/superdurable/dex/agents/go/eino v0.6.16 h1:erP+adwd4M1czyO39FQ9BKQ+InxKuCmj0aPoLQi+lFs=
+github.com/superdurable/dex/agents/go/eino v0.6.16/go.mod h1:wJEV/O0MmaHpJjqnsnadQIgAe9n1BoUCuR9GOqCje4k=
 github.com/superdurable/dex/blob-cache-go v0.1.2 h1:vHwmUZl59GkpTdrcwouj47rnKdx45ETfZdtfxn/vzSM=
 github.com/superdurable/dex/blob-cache-go v0.1.2/go.mod h1:Atepb7+sztvDCztVKmlvEKCSKFCkHKtDhoFYjaFmtEw=
 github.com/superdurable/dex/sdk-go v1.45.6 h1:S+WDtOUwiH8uzf9jfojh+fYSMQB/UDNUxWpxkjGbL2Q=

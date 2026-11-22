@@ -3,7 +3,10 @@ package signup_test
 // A connector tool's refusal on a retried attempt of its tool Step, through the Go connector tool source with the real
 // Slack and Gmail connectors and fence over a fake transport: after an attempt that may have sent, the call's outcome
 // is unknown, never failed, so the model is never told that nothing was sent, and a new call is refused instead of
-// posting or sending again. Dex Agents 0.6.14, which the TypeScript harnesses run, records the same.
+// posting or sending again. Dex Agents 0.6.14, which the TypeScript harnesses run, records the same when the earlier
+// attempt's checkpoint holds a claim or a send. On a retried attempt that finds no checkpoint, the Go harness follows
+// sdkgo's fence, which assumes each earlier attempt sent once since Dex may lose the latest checkpoint, and records the
+// refusal unknown; Dex Agents 0.6.14 records it failed. The Go harness is stricter there.
 
 import (
 	"errors"
@@ -213,6 +216,20 @@ func TestARefusalOnARetryAfterAnAttemptThatSentNothingStaysAFailure(t *testing.T
 	var toolError *dexagents.ToolExecutionError
 	if !errors.As(err, &toolError) || !strings.HasSuffix(toolError.Message, "not sent: ReviewAPI get: busy") {
 		t.Fatalf("the refusal is not a failure: %#v, %v (checkpoint %s)", outcome, err, checkpointText(review.checkpoint))
+	}
+}
+
+// The first attempt ran, but Dex lost its checkpoint: Dex stores checkpoints batched and lossy. The retry's refusal is
+// unknown, as sdkgo's fence would assume a possible send.
+func TestARefusalOnARetryThatFindsNoCheckpointIsUnknown(t *testing.T) {
+	harness := newRetryHarness(t)
+	review := harness.toolStep("post_review", "step-review")
+	review.attempts = 1 // the next attempt is attempt 2, with no checkpoint
+	harness.stub.SetFailingGets(1)
+	outcome, err := review.attempt(t, reviewArguments)
+	requireUnknown(t, outcome, err, "not sent: ReviewAPI get: busy (an earlier attempt of this call may have sent it)")
+	if posts := harness.slack.matching(isPost); len(posts) != 0 {
+		t.Fatalf("posts = %d", len(posts))
 	}
 }
 

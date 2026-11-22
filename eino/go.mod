@@ -8,7 +8,7 @@ require (
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/eino-contrib/jsonschema v1.0.3
 	github.com/gorilla/websocket v1.5.3
-	github.com/superdurable/dex-connectors-library/connectors/google/gmail/go v0.29.0
+	github.com/superdurable/dex-connectors-library/connectors/google/gmail/go v0.29.1
 	github.com/superdurable/dex-connectors-library/connectors/slack/go v1.8.1
 	github.com/superdurable/dex-connectors-library/sdkgo v0.39.0
 	github.com/superdurable/dex/agents/go/core v0.6.16
@@ -104,10 +104,3 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// The unreleased Dex modules, from the Dex checkout that make run-eino and make test-eino link at .local/dex
-// (EINO_DEX_CHECKOUT, docs/reference.md). After the Dex release, put the released version of each in the require block
-// above and delete its line here.
-replace github.com/superdurable/dex/agents/go/core => ../.local/dex/agents/go/core
-
-replace github.com/superdurable/dex/agents/go/eino => ../.local/dex/agents/go/eino

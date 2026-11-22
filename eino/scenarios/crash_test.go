@@ -493,7 +493,8 @@ func TestAWorkerKilledDuringSendWelcomeEmailSendsTheEmailOnce(t *testing.T) {
 	}
 	stack.killWorker()
 	stack.startWorker("")
-	// The retried tool Step searched Sent Mail by the message's Message-ID, found it, and never sent it again.
+	// The retried tool Step listed Sent Mail, found the copy by its X-Dex-Message-ID (Gmail replaced its Message-ID),
+	// and never sent it again.
 	stack.waitFor(sessionID+" ended", func() bool {
 		requireFinishAccepted(t, stack.snapshot(sessionID))
 		return !stack.isRunning(sessionID)
@@ -503,6 +504,10 @@ func TestAWorkerKilledDuringSendWelcomeEmailSendsTheEmailOnce(t *testing.T) {
 	sends := stack.gmailAPI.Sends()
 	equal(t, len(sends), 1)
 	equal(t, strings.Trim(sends[0].To, "<>"), stack.reviewAPI.AccountOf(accountID).Email)
+	equal(t, sends[0].DexMessageID, sends[0].MessageID)
+	if sends[0].SentMessageID == sends[0].MessageID || !contains(stack.gmailAPI.HeaderReads(), sends[0].GmailID) {
+		t.Fatalf("the send was not read back by its X-Dex-Message-ID: %+v, header reads %q", sends[0], stack.gmailAPI.HeaderReads())
+	}
 	if !contains(stack.replies(root), fmt.Sprintf("Sent the welcome email to %s.", stack.reviewAPI.AccountOf(accountID).Email)) {
 		t.Fatalf("replies = %q", stack.replies(root))
 	}

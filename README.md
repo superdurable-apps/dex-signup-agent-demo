@@ -63,8 +63,8 @@ A review goes like this:
 3. A reviewer's reply wakes the session for one turn. The agent approves, rejects, posts a new draft or sends the
    email.
 4. After the send or the rejection, finish_review ends the session: it closes as `COMPLETED` once that turn ends.
-   This needs server-zd 0.1.34 or newer and every Worker on `@superdurable/dex-agents` 0.6.14
-   ([docs/design.md](docs/design.md#ending-a-review)).
+   This needs server-zd 0.1.34 or newer and every Worker on `@superdurable/dex-agents` 0.6.14, or for the Eino
+   harness on the Dex Go modules 0.6.16 ([docs/design.md](docs/design.md#ending-a-review)).
 
 Locally, one process runs the Dex Worker, the watcher and the Trigger. On Dex Cloud, `node . worker` runs the Worker
 and the watcher, and `node . web` runs the Trigger.
@@ -113,10 +113,8 @@ You need Node.js 22.19 or later (24 recommended, see `.nvmrc`) and
 
    An inconsistent model setting stops the start with a message that says what to set. All variables and the model
    rules are in [docs/reference.md](docs/reference.md#configuration).
-5. **Start the agent:** `npm ci && npm start`, or `make run-eino` for the Eino harness (Go 1.26 or later). Until Dex
-   releases the Go modules of its Eino adapter, the Eino harness builds only against a Dex checkout that has them:
-   name it once with `make run-eino EINO_DEX_CHECKOUT=<path>` (see
-   [docs/reference.md](docs/reference.md#commands)). It reviews
+5. **Start the agent:** `npm ci && npm start`, or `make run-eino` for the Eino harness (Go 1.26 or later; it builds
+   from the released Dex Go modules `agents/go/core` and `agents/go/eino` 0.6.16). It reviews
    every pending sign-up registered since `SIGNUP_REVIEW_SINCE`. Stop it with Ctrl+C at any time. The sessions wait in Dex, and replies already delivered
    to the inbox continue after a restart. If a reply's delivery failed while the agent was down, the admin must
    post it again.

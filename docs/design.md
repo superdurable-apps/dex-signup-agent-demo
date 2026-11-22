@@ -377,7 +377,7 @@ The Dex Eino adapter runs the ADK agent in Step mode: every model call is one `R
 its own tool Step, as with pi. A `RunModel` makes exactly one model call over the session's stored messages, and the
 tool calls it returns run in their Steps. fetch_profile, github_user and finish_review are Eino tools; the six
 connector tools come from the Go connector tool source over the Slack and Gmail Go connectors
-(`connectors/slack/go` 1.8.1, `connectors/google/gmail/go` 0.29.0). A crash repeats at most the one call that was
+(`connectors/slack/go` 1.8.1, `connectors/google/gmail/go` 0.29.1). A crash repeats at most the one call that was
 running.
 
 The Go port keeps the TypeScript behaviour, texts and limits; `eino/internal/signup` holds it file by file. What
@@ -392,11 +392,19 @@ differs:
   its session with the request ID the TypeScript connector SDK derives from the event ID.
 - Each connector tool lists the connector's `defect` branch as an unknown outcome, as Dex Agents 0.6.14, which the
   TypeScript harnesses pin, records it; the Go connector tool source otherwise classifies by the branch's listing.
-- A tool's refusal or definite failure on a retried attempt of its tool Step, after an earlier attempt may have
-  sent (the Step's checkpoint holds a claim or a send of the call), is recorded `outcome_unknown`, as Dex Agents
-  0.6.14 records it. The Go connector tool source leaves this to the tool, so each tool reads the checkpoint as the
-  connector's fence does. Otherwise a check that fails on the retry, such as a ReviewAPI read while it is busy,
-  would tell the model that nothing was sent, and a new call could post the review or send the email again.
+- A tool's refusal or definite failure on a retried attempt of its tool Step is recorded `outcome_unknown` when an
+  earlier attempt may have sent. Otherwise a check that fails on the retry, such as a ReviewAPI read while it is
+  busy, would tell the model that nothing was sent, and a new call could post the review or send the email again.
+  The Go connector tool source leaves this to the tool, so each tool reads the Step's checkpoint by the rule of
+  sdkgo's fence. When the checkpoint holds a claim or a send of the call, Dex Agents 0.6.14 records the same. When
+  a retried attempt finds no checkpoint, the Go harness is stricter than the TypeScript harnesses: Dex stores
+  checkpoints batched and lossy, so attempt 1 may have sent and lost its claim, and the fence assumes each earlier
+  attempt sent once. Dex Agents 0.6.14 records that refusal failed.
+- The Go Gmail connector 0.29.1 reads Sent Mail back by the `X-Dex-Message-ID` header that every attempt of a send
+  repeats, not by Message-ID: Gmail replaces the Message-ID of the Sent copy with its own, so a search for the
+  client's value never finds the send (superdurable/dex-connectors-library#1061). It lists recent Sent Mail to the
+  recipient and reads each candidate's headers. The TypeScript harnesses pin `@superdurable/connector-google-gmail`
+  0.4.0, which predates this read-back.
 - The Go Gmail connector selects `uncertain` once the third send's outcome stays unknown; either way Dex records
   `outcome_unknown`. The Go fence keeps one marker per call ID in a Step's checkpoint; the app still makes one fenced
   write per Step.
@@ -406,8 +414,7 @@ differs:
 Each harness has its own session Flow type, and the Worker runs one of them: finish the open reviews before
 switching, or switch back to let them finish. Only the pi harness runs on Dex Cloud; the Claude Agent SDK and Eino
 harnesses run only locally. The Eino process has no web or worker mode, no committed session graph, and reads
-`.env` and `connections.json` as the local Node process does. Until Dex releases the Go modules of its Eino adapter,
-it builds only against a local Dex checkout that has them (see [Commands](reference.md#commands)).
+`.env` and `connections.json` as the local Node process does.
 
 ## Ending a review
 

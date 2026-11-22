@@ -10,7 +10,7 @@ TESTS := 'apptest/*.test.ts'
 DEX_SERVER_ZD_BINARY ?= $(shell command -v dex-server-zd)
 export DEX_SERVER_ZD_BINARY
 
-.PHONY: bootstrap restored session-graphs check-fdg-v2 check-static test-app test eino-dex run-eino test-eino
+.PHONY: bootstrap restored session-graphs check-fdg-v2 check-static test-app test run-eino test-eino
 # The platform starts bootstrap with the workspace; a second run waits for the
 # first, and every other target waits for a run in progress.
 bootstrap:
@@ -46,32 +46,9 @@ test: restored
 DEXCLI ?= $(shell command -v dexcli)
 export DEXCLI
 EINO_DEX_SERVER_ZD_BINARY ?=
-# Until Dex releases its Go modules agents/go/core and agents/go/eino, eino/go.mod replaces both with .local/dex.
-# EINO_DEX_CHECKOUT names a Dex checkout that has both (a relative path is relative to where make runs); run-eino and
-# test-eino link it at .local/dex, and later runs, and go commands in eino/, use that link. Each run prints the
-# checkout's commit, since go.sum pins no replaced module.
-EINO_DEX_CHECKOUT ?=
-eino-dex:
-	@if [ -n '$(EINO_DEX_CHECKOUT)' ]; then \
-		for module in core eino; do \
-			if [ ! -f '$(abspath $(EINO_DEX_CHECKOUT))'/agents/go/$$module/go.mod ]; then \
-				echo "EINO_DEX_CHECKOUT=$(EINO_DEX_CHECKOUT) has no agents/go/$$module/go.mod: name a Dex checkout that has the Go modules agents/go/core and agents/go/eino" >&2; \
-				exit 1; \
-			fi; \
-		done; \
-		if [ -e .local/dex ] && [ ! -L .local/dex ]; then \
-			echo ".local/dex is not a link: remove it, then run make again" >&2; exit 1; \
-		fi; \
-		mkdir -p .local && ln -sfn '$(abspath $(EINO_DEX_CHECKOUT))' .local/dex; \
-	elif [ ! -f .local/dex/agents/go/core/go.mod ] || [ ! -f .local/dex/agents/go/eino/go.mod ]; then \
-		echo "The Eino harness builds against the Dex Go modules agents/go/core and agents/go/eino, which Dex has not released yet." >&2; \
-		echo "Name a Dex checkout that has both once, such as: make $(or $(MAKECMDGOALS),test-eino) EINO_DEX_CHECKOUT=../dex" >&2; \
-		exit 1; \
-	fi; \
-	echo "Dex Go modules: $$(cd .local/dex && pwd -P) at $$(git -C .local/dex describe --always --dirty --abbrev=12 --exclude='*' 2>/dev/null || echo 'a commit git cannot read')"
-run-eino: eino-dex
+run-eino:
 	cd eino && GOWORK=off go build -o ../.local/bin/signup-eino ./cmd/signup-eino
 	SIGNUP_AGENT_HARNESS=eino ./.local/bin/signup-eino
-test-eino: eino-dex
+test-eino:
 	cd eino && GOWORK=off go vet ./... && DEXCLI='$(abspath $(DEXCLI))' DEX_SERVER_ZD_BINARY='$(abspath $(EINO_DEX_SERVER_ZD_BINARY))' \
 		GOWORK=off go test -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)') ./...
