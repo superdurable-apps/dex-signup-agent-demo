@@ -407,8 +407,8 @@ differs:
 - The Go Gmail connector 0.29.1 reads Sent Mail back by the `X-Dex-Message-ID` header that every attempt of a send
   repeats, not by Message-ID: Gmail replaces the Message-ID of the Sent copy with its own, so a search for the
   client's value never finds the send (superdurable/dex-connectors-library#1061). It lists recent Sent Mail to the
-  recipient and reads each candidate's headers. The TypeScript harnesses pin `@superdurable/connector-google-gmail`
-  0.4.0, which predates this read-back.
+  recipient and reads each candidate's headers. The TypeScript harnesses read back the same way since
+  `@superdurable/connector-google-gmail` 0.5.1.
 - The Go Gmail connector selects `uncertain` once the third send's outcome stays unknown; either way Dex records
   `outcome_unknown`. The Go fence keeps one marker per call ID in a Step's checkpoint; the app still makes one fenced
   write per Step.
