@@ -233,6 +233,49 @@ func TestARefusalOnARetryThatFindsNoCheckpointIsUnknown(t *testing.T) {
 	}
 }
 
+// A retry whose checkpoint cannot be read does not know the earlier attempts' sends: a checkpoint text that does not
+// decode, or the call's entry with more sends than its attempts allow. The retry's refusal is unknown, never failed. A
+// Retry would not help: the session repeats the checkpoint in every later attempt, and the write's fence fails closed
+// on it.
+func TestARefusalOnARetryWhoseCheckpointCannotBeReadIsUnknown(t *testing.T) {
+	t.Run("the checkpoint does not decode", func(t *testing.T) {
+		harness := newRetryHarness(t)
+		review := harness.toolStep("post_review", "step-review")
+		review.attempts = 1 // the next attempt is attempt 2
+		broken := `{"singleDispatchMarkers":`
+		review.checkpoint = &broken
+		harness.stub.SetFailingGets(1)
+		outcome, err := review.attempt(t, reviewArguments)
+		requireUnknown(t, outcome, err, "not sent: ReviewAPI get: busy (an earlier attempt of this call may have sent it)")
+		if posts := harness.slack.matching(isPost); len(posts) != 0 {
+			t.Fatalf("posts = %d", len(posts))
+		}
+	})
+	t.Run("the call's entry counts an impossible send", func(t *testing.T) {
+		// As in TestARefusalOnARetryAfterAnAttemptThatSentNothingStaysAFailure, Slack refuses the post with a rate
+		// limit and the fence records no send; the checkpoint then claims one send before attempt 1, which no attempt
+		// could have made.
+		harness := newRetryHarness(t)
+		harness.slack.answer = func(recordedRequest) (*http.Response, error) {
+			response := jsonResponse(429, map[string]any{"ok": false, "error": "ratelimited"})
+			response.Header.Set("Retry-After", "1")
+			return response, nil
+		}
+		review := harness.toolStep("post_review", "step-review")
+		outcome, err := review.attempt(t, reviewArguments)
+		requireRetry(t, outcome, err)
+		recorded := checkpointText(review.checkpoint)
+		if strings.Count(recorded, `"sendCount":0`) != 1 {
+			t.Fatalf("the checkpoint does not record one entry without a send: %s", recorded)
+		}
+		impossible := strings.Replace(recorded, `"sendCount":0`, `"sendCount":1`, 1)
+		review.checkpoint = &impossible
+		harness.stub.SetFailingGets(1)
+		outcome, err = review.attempt(t, reviewArguments)
+		requireUnknown(t, outcome, err, "not sent: ReviewAPI get: busy (an earlier attempt of this call may have sent it)")
+	})
+}
+
 // A tool's own definite failure after its write, in the same attempt, stays a failure, as the TypeScript tools'
 // ToolExecutionError is recorded. The tool's Call is its write's, so the attempt's fence claimed the send that reached
 // the provider, and sdkgo's own agent-tool classification would mark the failed branch unknown; the Go connector tool

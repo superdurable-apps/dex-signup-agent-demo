@@ -185,7 +185,7 @@ Several layers keep a write from happening twice:
 - **Slack events.** Slack can send an event twice, and the durable inbox can deliver one again after a crash. Since
   `@superdurable/connectors-sdk` 0.11 the reply target sends each event with a request ID derived from its event ID
   (`Client.invokeRPCWithOptions` of `@superdurable/dex` 1.45.4), and Dex applies an RPC with a known request ID at
-  most once. The Eino harness's target sends the same ID through the Go connector SDK's RPC target (sdkgo 0.40.0,
+  most once. The Eino harness's target sends the same ID through the Go connector SDK's RPC target (sdkgo 0.41.0,
   `sdkgo.WithTriggerRPCName("send_user_message")`). A copy under another event ID still reaches the session, so the
   prompt's rule that a repeated `[slack <ts>]` is ignored is the last guard.
 
@@ -391,7 +391,7 @@ differs:
 - Each connector tool is an application Mutation over the Slack or Gmail operation it writes with, as the
   TypeScript tools' `write()` is: it has that operation's definition and idempotency key, so it runs under the
   operation's own call identity, idempotency key, send cap and fence, and its invoke calls the operation's `Invoke`
-  with the same call and reads the attempt (sdkgo 0.40.0's `Kind`, `Branch`, `Value` and `Failure`). The Go
+  with the same call and reads the attempt (sdkgo 0.41.0's `Kind`, `Branch`, `Value` and `Failure`). The Go
   connector tool source has no hook for a tool's own invoke, so the Mutation goes through it like a connector
   operation. A Go `Invoke` cannot return an error, so a tool's refusal or definite failure is a `failed` branch that
   the tool lists as rejected, and it reaches the model inside the connector source's text for that branch, such as
@@ -403,11 +403,15 @@ differs:
 - A tool's refusal or definite failure on a retried attempt of its tool Step is recorded `outcome_unknown` when an
   earlier attempt may have sent. Otherwise a check that fails on the retry, such as a ReviewAPI read while it is
   busy, would tell the model that nothing was sent, and a new call could post the review or send the email again.
-  The Go connector tool source leaves this to the tool, so each tool reads the Step's checkpoint by the rule of
-  sdkgo's fence. When the checkpoint holds a claim or a send of the call, Dex Agents 0.6.14 records the same. When
-  a retried attempt finds no checkpoint, the Go harness is stricter than the TypeScript harnesses: Dex stores
-  checkpoints batched and lossy, so attempt 1 may have sent and lost its claim, and the fence assumes each earlier
-  attempt sent once. Dex Agents 0.6.14 records that refusal failed.
+  The Go connector tool source leaves this to the tool, so each tool asks sdkgo for the bound on earlier sends that
+  its write's fence computes: `singledispatch.MaximumPriorSends` with the tool's Call ID, the ID of that fence, since
+  the write is the operation's `Invoke` with the tool's call. When the checkpoint holds a claim or a send of the
+  call, Dex Agents 0.6.14 records the same. When a retried attempt finds no checkpoint, the Go harness is stricter
+  than the TypeScript harnesses: Dex stores checkpoints batched and lossy, so attempt 1 may have sent and lost its
+  claim, and the fence assumes each earlier attempt sent once. Dex Agents 0.6.14 records that refusal failed. A
+  checkpoint the read cannot use (it does not decode, or counts more sends than the attempts allow) also makes the
+  refusal unknown rather than a retry, since every later attempt reads the same checkpoint and the write's fence
+  fails closed on it.
 - The Go Gmail connector 0.29.1 reads Sent Mail back by the `X-Dex-Message-ID` header that every attempt of a send
   repeats, not by Message-ID: Gmail replaces the Message-ID of the Sent copy with its own, so a search for the
   client's value never finds the send (superdurable/dex-connectors-library#1061). It lists recent Sent Mail to the

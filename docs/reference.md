@@ -114,8 +114,8 @@ build. [`eino/go.mod`](../eino/go.mod) requires:
 | --- | --- | --- |
 | `github.com/superdurable/dex/agents/go/core` | 0.6.16 | Dex Agents for Go: the session Flow, tool policies and the Go connector tool source |
 | `github.com/superdurable/dex/agents/go/eino` | 0.6.16 | The Dex Eino adapter |
-| `github.com/superdurable/dex/sdk-go` | 1.45.16 | The Dex Go SDK, the minimum of sdkgo 0.40.0 |
-| `github.com/superdurable/dex-connectors-library/sdkgo` | 0.40.0 | The Go connector SDK: the dispatch fence, the RPC Trigger target that sends one request ID per event, and the attempt accessors the connector tools read |
+| `github.com/superdurable/dex/sdk-go` | 1.45.16 | The Dex Go SDK, the minimum of sdkgo 0.41.0 |
+| `github.com/superdurable/dex-connectors-library/sdkgo` | 0.41.0 | The Go connector SDK: the dispatch fence, the RPC Trigger target that sends one request ID per event, the attempt accessors the connector tools read, and the read of earlier sends (`singledispatch.MaximumPriorSends`) a connector tool's refusal on a retry asks |
 | `github.com/superdurable/dex-connectors-library/connectors/slack/go` | 1.8.1 | The Slack connector |
 | `github.com/superdurable/dex-connectors-library/connectors/google/gmail/go` | 0.29.1 | The Gmail connector; it reads a send back from Sent Mail by `X-Dex-Message-ID` |
 | `github.com/cloudwego/eino` | 0.9.23 | Eino and its ADK `ChatModelAgent` |
@@ -199,9 +199,10 @@ Scenarios:
   transport and sdkgo's fake Step context; the Gmail fake replaces the Message-ID of each Sent copy, as Gmail does),
   plus a Worker killed after Gmail accepted the send, whose next attempt sends no second email. They also cover the
   Eino model rules and endpoints, the connector tools over the connector mocks and, through the Go connector tool
-  source on the real connectors, a refusal on a retried attempt after a possible send or with no checkpoint, a
-  definite failure after a send in the same attempt (a decision's note, a send Gmail rejects), which stays failed,
-  and a test that fails when `prompt.txt` differs from `signupAgentPrompt` in `src/signup-agent.ts`.
+  source on the real connectors, a refusal on a retried attempt after a possible send, with no checkpoint or with a
+  checkpoint that cannot be read, a definite failure after a send in the same attempt (a decision's note, a send
+  Gmail rejects), which stays failed, and a test that fails when `prompt.txt` differs from `signupAgentPrompt` in
+  `src/signup-agent.ts`.
   `eino/cmd/signup-eino` checks that `.env` reads as Node's `--env-file` reads it.
 - The scenario suite (`eino/scenarios`) ports `test/support/signup-review-scenarios.ts` scenario by scenario, with
   the same names and assertions, on a private Dex engine: a scripted Eino `ToolCallingChatModel` over the same
