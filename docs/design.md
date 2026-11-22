@@ -406,7 +406,8 @@ differs:
 Each harness has its own session Flow type, and the Worker runs one of them: finish the open reviews before
 switching, or switch back to let them finish. Only the pi harness runs on Dex Cloud; the Claude Agent SDK and Eino
 harnesses run only locally. The Eino process has no web or worker mode, no committed session graph, and reads
-`.env` and `connections.json` as the local Node process does.
+`.env` and `connections.json` as the local Node process does. Until Dex releases the Go modules of its Eino adapter,
+it builds only against a local Dex checkout that has them (see [Commands](reference.md#commands)).
 
 ## Ending a review
 

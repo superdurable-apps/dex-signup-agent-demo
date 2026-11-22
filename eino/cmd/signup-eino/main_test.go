@@ -20,6 +20,11 @@ func TestDotEnvFillsInWhatTheShellDoesNotSet(t *testing.T) {
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The shell sets SIGNUP_AGENT_HARNESS and none of the names the .env fills in, whatever the shell that runs the
+	// tests sets: a CI job often sets GITHUB_TOKEN.
+	for _, name := range []string{"REVIEW_API_URL", "SLACK_REVIEW_CHANNEL", "GITHUB_TOKEN"} {
+		unsetenv(t, name)
+	}
 	t.Setenv("SIGNUP_AGENT_HARNESS", "eino")
 	values, err := environment(path)
 	if err != nil {
@@ -38,6 +43,15 @@ func TestDotEnvFillsInWhatTheShellDoesNotSet(t *testing.T) {
 	missing, err := environment(filepath.Join(t.TempDir(), "none"))
 	if err != nil || missing["SIGNUP_AGENT_HARNESS"] != "eino" {
 		t.Fatalf("without .env: %v", err)
+	}
+}
+
+// unsetenv unsets name for the rest of the test; t.Setenv restores the shell's value afterwards.
+func unsetenv(t *testing.T, name string) {
+	t.Helper()
+	t.Setenv(name, "")
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatal(err)
 	}
 }
 

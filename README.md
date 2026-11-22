@@ -113,7 +113,10 @@ You need Node.js 22.19 or later (24 recommended, see `.nvmrc`) and
 
    An inconsistent model setting stops the start with a message that says what to set. All variables and the model
    rules are in [docs/reference.md](docs/reference.md#configuration).
-5. **Start the agent:** `npm ci && npm start`, or `make run-eino` for the Eino harness (Go 1.26 or later). It reviews
+5. **Start the agent:** `npm ci && npm start`, or `make run-eino` for the Eino harness (Go 1.26 or later). Until Dex
+   releases the Go modules of its Eino adapter, the Eino harness builds only against a Dex checkout that has them:
+   name it once with `make run-eino EINO_DEX_CHECKOUT=<path>` (see
+   [docs/reference.md](docs/reference.md#commands)). It reviews
    every pending sign-up registered since `SIGNUP_REVIEW_SINCE`. Stop it with Ctrl+C at any time. The sessions wait in Dex, and replies already delivered
    to the inbox continue after a restart. If a reply's delivery failed while the agent was down, the admin must
    post it again.

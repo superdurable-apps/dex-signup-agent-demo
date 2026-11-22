@@ -80,11 +80,14 @@ platform contract: `npm run build` writes `dist/`, `node . web` serves `/api/hea
 - `npm test` runs the scenario suite of the pi and Claude Agent SDK harnesses (`test/`); it needs `dexcli` and
   `dex-server-zd` on `PATH`.
 - `make test-eino` runs the Eino harness's tests (`eino/`) with Go 1.26 or later and `DEXCLI` (or `dexcli` on `PATH`).
-  In `eino/go.mod` the unreleased Dex modules are `replace` lines at the end, one per module.
+  Until Dex releases its Go modules `agents/go/core` and `agents/go/eino`, `eino/go.mod` replaces them with
+  `.local/dex`, the Dex checkout that `EINO_DEX_CHECKOUT` names once (`make test-eino EINO_DEX_CHECKOUT=<path>`
+  links it there). Never put a path of your machine in `eino/go.mod`; a test fails on one.
 - Wait with `env.eventually` or `pollUntil`, never call a real model.
 
 ## Commands
 
 - `make bootstrap` restores `node_modules`; `make check-static` checks the Flow graph, the types and the build.
 - `make test-app RUN=<regexp>` runs app tests; `make test` runs the scenario suite.
-- `make run-eino` runs the Eino harness locally; `make test-eino RUN=<regexp>` runs its tests.
+- `make run-eino` runs the Eino harness locally; `make test-eino RUN=<regexp>` runs its tests. Both take
+  `EINO_DEX_CHECKOUT=<path>` the first time.

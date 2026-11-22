@@ -105,8 +105,9 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-// The unreleased Dex modules, from the integrated Dex branch. After the Dex release, replace each line with the
-// released tag in the require block above and delete it here.
-replace github.com/superdurable/dex/agents/go/core => /Users/zz/dex-eino/agents/go/core
+// The unreleased Dex modules, from the Dex checkout that make run-eino and make test-eino link at .local/dex
+// (EINO_DEX_CHECKOUT, docs/reference.md). After the Dex release, put the released version of each in the require block
+// above and delete its line here.
+replace github.com/superdurable/dex/agents/go/core => ../.local/dex/agents/go/core
 
-replace github.com/superdurable/dex/agents/go/eino => /Users/zz/dex-eino/agents/go/eino
+replace github.com/superdurable/dex/agents/go/eino => ../.local/dex/agents/go/eino
