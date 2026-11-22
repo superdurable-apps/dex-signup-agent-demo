@@ -192,6 +192,7 @@ type crashStack struct {
 	workers    int
 	logs       *signuptest.RecordingLogger
 	threads    map[string]*signuptest.ReviewThread
+	started    []string
 }
 
 // thread is the review thread rooted at root, so each reply gets a later ts than the ones before it.
@@ -278,6 +279,9 @@ func startCrashStack(t *testing.T) *crashStack {
 
 func (stack *crashStack) dumpLogs() {
 	stack.t.Logf("Trigger records:\n%s", stack.logs.Text())
+	for _, sessionID := range stack.started {
+		dumpSession(stack.t, stack.ctx, stack.sessions, stack.engine, sessionID)
+	}
 	for index := 1; index <= stack.workers; index++ {
 		if contents, err := os.ReadFile(filepath.Join(stack.directory, fmt.Sprintf("worker-%d.log", index))); err == nil {
 			stack.t.Logf("worker %d log:\n%s", index, contents)
@@ -331,6 +335,7 @@ func (stack *crashStack) addReview(emailWord string) (string, string) {
 	if failed, err := signup.StartPendingReviews(stack.ctx, signup.SignupWatcherParts{Sessions: stack.sessions, ReviewAPI: reviewAPI, ReviewSince: time.Now().Add(-time.Hour)}); err != nil || len(failed) != 0 {
 		stack.t.Fatalf("start the review: %v %v", failed, err)
 	}
+	stack.started = append(stack.started, signup.ReviewSessionID(accountID))
 	return accountID, signup.ReviewSessionID(accountID)
 }
 
@@ -414,7 +419,10 @@ func (stack *crashStack) approveAndSend(accountID, sessionID, root string) {
 		stack.t.Fatalf("replies = %q", stack.replies(root))
 	}
 	stack.reply(sessionID, root, "send")
-	stack.waitFor(sessionID+" ended", func() bool { return !stack.isRunning(sessionID) })
+	stack.waitFor(sessionID+" ended", func() bool {
+		requireFinishAccepted(stack.t, stack.snapshot(sessionID))
+		return !stack.isRunning(sessionID)
+	})
 	info, _ := stack.client.DescribeFlow(stack.ctx, sessionID)
 	equal(stack.t, info.Status, dex.FlowCompleted)
 }
@@ -486,7 +494,10 @@ func TestAWorkerKilledDuringSendWelcomeEmailSendsTheEmailOnce(t *testing.T) {
 	stack.killWorker()
 	stack.startWorker("")
 	// The retried tool Step searched Sent Mail by the message's Message-ID, found it, and never sent it again.
-	stack.waitFor(sessionID+" ended", func() bool { return !stack.isRunning(sessionID) })
+	stack.waitFor(sessionID+" ended", func() bool {
+		requireFinishAccepted(t, stack.snapshot(sessionID))
+		return !stack.isRunning(sessionID)
+	})
 	info, _ := stack.client.DescribeFlow(stack.ctx, sessionID)
 	equal(t, info.Status, dex.FlowCompleted)
 	sends := stack.gmailAPI.Sends()

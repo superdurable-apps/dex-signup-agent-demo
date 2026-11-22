@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	dexagents "github.com/superdurable/dex/agents/go/core"
 	"github.com/superdurable/dex/agents/go/core/agentstest"
 	"github.com/superdurable/dex/sdk-go/dex"
 
@@ -105,6 +106,7 @@ func TestTheLocalProcessReviewsApprovesAndSendsFromSlackReplies(t *testing.T) {
 			default:
 			}
 			if time.Now().After(deadline) {
+				dumpSession(t, ctx, dexagents.NewAgentSessionClient(client, application.SessionFlow), engine, sessionID)
 				t.Fatalf("timed out waiting for %s\n%s", description, logs.Text())
 			}
 			time.Sleep(200 * time.Millisecond)
@@ -139,6 +141,9 @@ func TestTheLocalProcessReviewsApprovesAndSendsFromSlackReplies(t *testing.T) {
 	thread.Reply(reviewerID, "send", nil)
 	// finish_review ends the session after the send: it completes once that turn ends.
 	eventually("the end of the review", func() bool {
+		if snapshot, err := application.Services.Sessions.Snapshot(ctx, accountID); err == nil {
+			requireFinishAccepted(t, snapshot)
+		}
 		info, err := client.DescribeFlow(ctx, sessionID)
 		return err == nil && info.Status != dex.FlowRunning
 	})

@@ -79,14 +79,19 @@ type suite struct {
 
 // dumpSession logs a session's messages, tool calls and Step history, for a failure report.
 func (current *suite) dumpSession(t *testing.T, sessionID string) {
-	snapshot, err := current.sessions.GetAgentSnapshot(current.ctx, sessionID)
+	dumpSession(t, current.ctx, current.sessions, current.engine, sessionID)
+}
+
+// dumpSession logs a session's messages, tool calls and Step history, for a failure report.
+func dumpSession(t *testing.T, ctx context.Context, sessions *dexagents.AgentSessionClient, engine *agentstest.PrivateDexEngine, sessionID string) {
+	snapshot, err := sessions.GetAgentSnapshot(ctx, sessionID)
 	if err != nil {
 		t.Logf("%s: no snapshot: %v", sessionID, err)
 		return
 	}
 	var lines []string
 	if snapshot.State != nil {
-		lines = append(lines, fmt.Sprintf("state %s turns %d last error %s", snapshot.State.Status, snapshot.State.TurnCount, text(snapshot.State.LastTurnError)))
+		lines = append(lines, fmt.Sprintf("state %s turns %d queued %d last error %s", snapshot.State.Status, snapshot.State.TurnCount, snapshot.QueuedMessageCount, text(snapshot.State.LastTurnError)))
 	}
 	for _, message := range snapshot.Messages {
 		body := text(message.Text)
@@ -101,12 +106,10 @@ func (current *suite) dumpSession(t *testing.T, sessionID string) {
 	for _, call := range snapshot.ToolCalls {
 		lines = append(lines, fmt.Sprintf("call %s %s %s output %q error %q", call.ToolCallID, call.ToolName, call.Status, text(call.Output), text(call.Error)))
 	}
-	if history, err := agentstest.ReadStepHistory(current.ctx, current.engine.Dexcli(), current.engine.Address(), sessionID); err == nil {
+	if history, err := agentstest.ReadStepHistory(ctx, engine.Dexcli(), engine.Address(), sessionID); err == nil {
 		var steps []string
 		for _, entry := range history {
-			if entry.EventType == agentstest.ExecuteCompletedEvent {
-				steps = append(steps, fmt.Sprintf("%s#%d", entry.StepType, entry.FinalAttempt))
-			}
+			steps = append(steps, fmt.Sprintf("%s:%s#%d", entry.EventType, entry.StepType, entry.FinalAttempt))
 		}
 		lines = append(lines, "steps "+strings.Join(steps, " "))
 	}
@@ -379,11 +382,34 @@ func (current *suite) waitForIdle(t *testing.T, sessionID string, afterTurns int
 	})
 }
 
+// finishFailure is the result of a finish_review that did not finish, or "". A Dex server older than server-zd
+// 0.1.34 refuses finish_review's graceful completion, and the session then waits for a reply forever.
+func finishFailure(snapshot dexagents.AgentSnapshot) string {
+	for _, message := range snapshot.Messages {
+		if message.Role == dexagents.MessageRoleTool && bare(text(message.ToolName)) == "finish_review" && !strings.Contains(text(message.ToolOutput), `"status":"finished"`) {
+			return text(message.ToolOutput)
+		}
+	}
+	return ""
+}
+
+// requireFinishAccepted fails at once when finish_review could not complete the session.
+func requireFinishAccepted(t *testing.T, snapshot dexagents.AgentSnapshot) {
+	t.Helper()
+	if failure := finishFailure(snapshot); failure != "" {
+		t.Fatalf("finish_review did not complete the session (%q): the Dex server refuses graceful completion; "+
+			"use dexcli 1.47.9 or later (server-zd 0.1.34) as DEXCLI and leave DEX_SERVER_ZD_BINARY unset", failure)
+	}
+}
+
 // waitForEnd waits until the session ended as finish_review ends it: completed, not cancelled, after the rest of its
 // turn, so the finish_review result and the model's final answer after it are stored.
 func (current *suite) waitForEnd(t *testing.T, sessionID string) {
 	t.Helper()
-	current.pollUntil(t, sessionID+" ended", func() bool { return !current.isRunning(t, sessionID) })
+	current.pollUntil(t, sessionID+" ended", func() bool {
+		requireFinishAccepted(t, current.snapshotOf(t, sessionID))
+		return !current.isRunning(t, sessionID)
+	})
 	info, err := current.client.DescribeFlow(current.ctx, sessionID)
 	if err != nil || info.Status != dex.FlowCompleted {
 		t.Fatalf("%s: status %v, %v", sessionID, info.Status, err)

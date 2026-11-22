@@ -97,7 +97,7 @@ message that says what to set.
 | `make session-graphs` | Writes both harnesses' session graphs with the reply Trigger binding |
 | `node . web`, `node . worker` | The two hosted processes; `node .` with no mode is the local process |
 | `make run-eino` | Builds `eino/cmd/signup-eino` into `.local/bin/` and runs it with `.env`: the Eino harness's local process (Worker, watcher and reply Trigger) |
-| `make test-eino [RUN=<regexp>]` | The Eino harness's tests (`eino/`): unit tests, the scenario suite and the crash tests; `DEXCLI` names the `dexcli` that starts their private engines |
+| `make test-eino [RUN=<regexp>]` | The Eino harness's tests (`eino/`): unit tests, the scenario suite and the crash tests. `DEXCLI` names the `dexcli` (1.47.9 or later) that starts their private engines, with the `dex-server-zd` beside it; `EINO_DEX_SERVER_ZD_BINARY` names another one. A server older than server-zd 0.1.34 refuses finish_review's graceful completion, and the tests that end a review say so |
 
 `make bootstrap`, `make check-fdg-v2` and `make check-static` need Go, the version of
 [`tools/appmanifest/go.mod`](../tools/appmanifest/go.mod) or later. Python has no YAML parser, so
