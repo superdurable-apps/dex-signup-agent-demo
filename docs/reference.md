@@ -4,7 +4,8 @@ Configuration, commands, files and tests. For the overview, see the [README](../
 
 ## Configuration
 
-Locally, `npm start` loads `.env` (copy [`.env.example`](../.env.example)). Hosted, the application environment
+Locally, `npm start` and `make run-eino` load `.env` (copy [`.env.example`](../.env.example)); a variable already set in
+the shell wins. Hosted, the application environment
 comes from the Project configuration; see [dex-cloud.md](dex-cloud.md#setup). [`src/config.ts`](../src/config.ts)
 reads and checks it at start, and a bad value stops the start with a message that says what to set.
 
@@ -20,7 +21,7 @@ reads and checks it at start, and a bad value stops the start with a message tha
 | `SLACK_REVIEW_CHANNEL` | Local only. Channel ID of the review posts and of the replies the Trigger takes |
 | `SIGNUP_REVIEWER_SLACK_IDS` | Local only. Comma-separated Slack member IDs whose replies count |
 | `DEX_CONNECTOR_CONFIG_FILE` | Local only. The connector configuration (`connections.json`) with `review-slack` and `welcome-gmail` |
-| `SIGNUP_AGENT_HARNESS` | `pi` (default) or `claude-agent-sdk`. Hosted, only `pi` |
+| `SIGNUP_AGENT_HARNESS` | `pi` (default) or `claude-agent-sdk` for `npm start`. Hosted, only `pi`. The Eino process takes it unset or `eino`; `make run-eino` sets `eino` |
 | `SIGNUP_AGENT_PI_MODEL` | pi: the model; see [pi model selection](#pi-model-selection). Default `anthropic/claude-opus-5-5` |
 | `ANTHROPIC_API_KEY` | pi: required for an `anthropic/…` catalog model. Claude Agent SDK: used with `SIGNUP_AGENT_CLAUDE_AUTH=api-key` |
 | `SIGNUP_AGENT_PI_BASE_URL`, `SIGNUP_AGENT_PI_API_KEY` | pi with a custom endpoint: the base URL selects it, and its key is then required |
@@ -28,6 +29,8 @@ reads and checks it at start, and a bad value stops the start with a message tha
 | `SIGNUP_AGENT_CLAUDE_MODEL` | Claude Agent SDK: the model, `claude-opus-5-5` by default |
 | `SIGNUP_AGENT_CLAUDE_AUTH` | Claude Agent SDK: `login` (default, your Claude Code login) or `api-key` |
 | `SIGNUP_AGENT_CLAUDE_CLI` | Claude Agent SDK: optional path of a Claude Code CLI to run instead of the bundled one |
+| `SIGNUP_AGENT_EINO_BASE_URL`, `SIGNUP_AGENT_EINO_MODEL`, `SIGNUP_AGENT_EINO_API_KEY` | Eino: the endpoint's base URL, model ID and key, all required; see [Eino model selection](#eino-model-selection) |
+| `SIGNUP_AGENT_EINO_PROTOCOL` | Eino: `openai` (default, Chat Completions) or `anthropic` (Messages) |
 | `GITHUB_TOKEN` | Optional. Raises the GitHub API rate limit for `github_user` |
 | `SIGNUP_WATCH_INTERVAL_SECONDS` | Seconds between reads of the pending sign-ups (30) |
 | `SIGNUP_WORKER_SLOTS` | Local only. The Worker's execution slots (64). A running turn or tool call takes one; a review that waits for a reply takes none. Hosted, the slots come from `application.workerSlots` in `dex-app.yaml` |
@@ -60,6 +63,24 @@ a message that says what to set.
     The key is sent as `x-api-key`; `ANTHROPIC_API_KEY` is never used.
   - `ANTHROPIC_API_KEY` is not needed with either protocol.
 
+### Eino model selection
+
+`einoModelSelection` in [`eino/internal/signup/config.go`](../eino/internal/signup/config.go) holds the rules. They are
+the pi rules for a custom endpoint, since Eino has no model catalog; any other combination stops the start with a
+message that says what to set.
+
+- `SIGNUP_AGENT_EINO_BASE_URL`, `SIGNUP_AGENT_EINO_MODEL` and `SIGNUP_AGENT_EINO_API_KEY` are required.
+  `SIGNUP_AGENT_EINO_PROTOCOL` is `openai` unless set to `anthropic`. The base URL is an http(s) URL with a host and no
+  query or fragment.
+  - `openai` (eino-ext `components/model/openai`): the base URL is the part before `/chat/completions` (such as
+    `https://llm.example.com/v1`), and the key goes as a Bearer token.
+  - `anthropic` (eino-ext `components/model/claude`): the base URL is the part before `/v1/messages` (such as
+    `https://llm.example.com/anthropic`), and the key goes as `x-api-key`; no `Authorization` header is sent, so an
+    `ANTHROPIC_AUTH_TOKEN` of the shell never reaches the endpoint. The Anthropic Go SDK under eino-ext retries a failed
+    request twice inside the model call, and eino-ext offers no option to turn that off.
+- The model is the endpoint's model ID as it is, slashes included; the pi prefix `openai-compatible/` is refused.
+- Both protocols ask for at most 16,384 output tokens.
+
 ## Commands
 
 | Command | What it does |
@@ -75,12 +96,15 @@ a message that says what to set.
 | `make test-app [RUN=<regexp>]` | The app tests (`apptest/`), optionally selected by name |
 | `make session-graphs` | Writes both harnesses' session graphs with the reply Trigger binding |
 | `node . web`, `node . worker` | The two hosted processes; `node .` with no mode is the local process |
+| `make run-eino` | Builds `eino/cmd/signup-eino` into `.local/bin/` and runs it with `.env`: the Eino harness's local process (Worker, watcher and reply Trigger) |
+| `make test-eino [RUN=<regexp>]` | The Eino harness's tests (`eino/`): unit tests, the scenario suite and the crash tests; `DEXCLI` names the `dexcli` that starts their private engines |
 
 `make bootstrap`, `make check-fdg-v2` and `make check-static` need Go, the version of
 [`tools/appmanifest/go.mod`](../tools/appmanifest/go.mod) or later. Python has no YAML parser, so
 `scripts/render-flow-definitions.py` reads `dex-app.yaml` only through `tools/appmanifest`, the platform's own
 decoder: `go run -C tools/appmanifest . ../../dex-app.yaml` prints the canonical JSON the platform reads. `npm start`,
-`npm test`, `make test-app` and `make session-graphs` do not read the manifest and need no Go.
+`npm test`, `make test-app` and `make session-graphs` do not read the manifest and need no Go. `make run-eino` and
+`make test-eino` need Go 1.26 or later.
 
 ## Files
 
@@ -90,7 +114,8 @@ decoder: `go run -C tools/appmanifest . ../../dex-app.yaml` prints the canonical
 | [`src/review-state.ts`](../src/review-state.ts) | The session's records: the review's thread, the latest draft, earlier sends and decisions; the thread index |
 | [`src/review-replies.ts`](../src/review-replies.ts) | The reply Trigger's target and runner |
 | [`src/signup-watcher.ts`](../src/signup-watcher.ts) | Starts each pending sign-up's session |
-| [`src/pi-agent.ts`](../src/pi-agent.ts), [`src/claude-agent.ts`](../src/claude-agent.ts) | The two harnesses |
+| [`src/pi-agent.ts`](../src/pi-agent.ts), [`src/claude-agent.ts`](../src/claude-agent.ts) | The pi and Claude Agent SDK harnesses |
+| [`eino/`](../eino) | The Eino harness, a Go module: `cmd/signup-eino` (the local process), `internal/signup` (the port of `src/`, file by file, with the prompt copy `prompt.txt`), `internal/signuptest` (test support) and `scenarios` (the scenario suite and the crash tests) |
 | [`src/application.ts`](../src/application.ts) | `loadApplication`: the configuration, services and each mode's background work |
 | [`src/config.ts`](../src/config.ts) | The configuration and the pi model rules |
 | [`src/review-api.ts`](../src/review-api.ts) | The Dex Cloud ReviewAPI client, including the optional sign-up answers `jobTitle`, `company` and `purpose` |
@@ -150,6 +175,25 @@ Scenarios:
   response; a sign-up from before `SIGNUP_REVIEW_SINCE`.
 - A restart: a new runner with an empty thread index, and a reply that arrives while the Worker is down, retried from
   the inbox and delivered once the Worker is back.
+
+**Eino tests** (`make test-eino`, [`eino/`](../eino)): no real model, Slack or Gmail either.
+
+- Unit tests (`eino/internal/signup`) port `test/review-state.test.ts`, `test/review-replies.test.ts`,
+  `test/profile-sources.test.ts`, `test/signup-agent.test.ts`, `test/signup-answers.test.ts` and
+  `test/connector-fences.test.ts` (the released Go Slack and Gmail operations with the real fence over a fake
+  transport and sdkgo's fake Step context), plus the Eino model rules and endpoints, the connector tools over the
+  connector mocks, and a test that fails when `prompt.txt` differs from `signupAgentPrompt` in `src/signup-agent.ts`.
+- The scenario suite (`eino/scenarios`) ports `test/support/signup-review-scenarios.ts` scenario by scenario, with
+  the same names and assertions, on a private Dex engine: a scripted Eino `ToolCallingChatModel` over the same
+  `decideNextStep`, the Go Slack and Gmail mocks, the ReviewAPI stub, and reviewer replies as Slack Events API
+  envelopes on a Socket Mode stand-in (a local WebSocket server that `apps.connections.open` points to) through the
+  application's own reply runner, durable inbox and target.
+- A test of the local process (`LoadApplication`, the Worker, and `Start`'s watcher and reply Trigger) reviews,
+  approves and sends a sign-up from Slack replies on the real Slack and Gmail Go connectors against local provider
+  stand-ins, as the app test `TestReviewIsApprovedAndSentFromSlackReplies` does for pi.
+- Crash tests run the Worker as a child process on the real Slack and Gmail Go connectors against local provider
+  stand-ins and SIGKILL it during a `RunModel`, after post_review's Slack post, and during send_welcome_email's Gmail
+  send. After the restart the review is posted once, the email is sent once, and the session completes.
 
 **Unit tests** (`test/`): the reply target's routing (filtered, delivered, dropped, retried for a recent thread,
 dropped for a disputed thread); the review records read from tool results and never from a turn note; the index

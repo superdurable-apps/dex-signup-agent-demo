@@ -14,7 +14,12 @@ README gives the overview and the local run; `docs/design.md` describes the desi
 2. `src/review-replies.ts`: the reply Trigger's target and runner, and the index from a thread to its session.
 3. `src/signup-watcher.ts`: starts each pending sign-up's session; nothing else.
 4. `src/application.ts`: `loadApplication`, the configuration (`src/config.ts`) and each mode's background work.
-5. `apptest/signup-review.test.ts`: the app tests; `test/` holds the scenario suite of both harnesses.
+5. `apptest/signup-review.test.ts`: the app tests; `test/` holds the scenario suite of the pi and Claude Agent SDK
+   harnesses.
+6. `eino/`: the Eino harness, a Go module that ports `src/` file by file (`eino/internal/signup`), with its own
+   scenario suite and crash tests (`eino/scenarios`). A change to the prompt, a tool, the reply routing or the
+   watcher changes both: copy `signupAgentPrompt` into `eino/internal/signup/prompt.txt` (a test fails while they
+   differ), and port the change to the Go file of the same name.
 
 The session Flow's graph is committed, not rendered: dex-app.yaml declares
 `flow-definitions/signup-review-pi-agent.json`. When the Flow type or permission changes, or after a
@@ -43,7 +48,8 @@ platform contract: `npm run build` writes `dist/`, `node . web` serves `/api/hea
   `process.env`. The review channel and the reviewers come only from the `signup-review-reply` binding's
   configuration, which the user fills in Studio Setup.
 - Locally, `.env` sets everything, including `SLACK_REVIEW_CHANNEL` and `SIGNUP_REVIEWER_SLACK_IDS`.
-- Only the pi harness runs hosted; the Claude Agent SDK harness runs only locally.
+- Only the pi harness runs hosted; the Claude Agent SDK and Eino harnesses run only locally. The Eino process reads
+  the same `.env`, with its model in `SIGNUP_AGENT_EINO_*`.
 - The connector entries of `dex-app.yaml` name npm packages with the exact versions `package.json` pins (the
   platform's PGTSCONN shape); `make check-fdg-v2` fails when they differ.
 - `dex-app.yaml` is strict YAML: no anchors, aliases, tags or repeated keys, and quote every value YAML 1.1 and 1.2
@@ -69,10 +75,14 @@ platform contract: `npm run build` writes `dist/`, `node . web` serves `/api/hea
 
 - `make test-app` runs `apptest/*.test.ts`, each test on its own `dex-server-zd dev`, with a scripted pi model, the
   connector mocks, a ReviewAPI stub, and reviewer replies as Slack events on a Socket Mode stand-in.
-- `npm test` runs the scenario suite of both harnesses (`test/`); it needs `dexcli` and `dex-server-zd` on `PATH`.
+- `npm test` runs the scenario suite of the pi and Claude Agent SDK harnesses (`test/`); it needs `dexcli` and
+  `dex-server-zd` on `PATH`.
+- `make test-eino` runs the Eino harness's tests (`eino/`) with Go 1.26 or later and `DEXCLI` (or `dexcli` on `PATH`).
+  In `eino/go.mod` the unreleased Dex modules are `replace` lines at the end, one per module.
 - Wait with `env.eventually` or `pollUntil`, never call a real model.
 
 ## Commands
 
 - `make bootstrap` restores `node_modules`; `make check-static` checks the Flow graph, the types and the build.
 - `make test-app RUN=<regexp>` runs app tests; `make test` runs the scenario suite.
+- `make run-eino` runs the Eino harness locally; `make test-eino RUN=<regexp>` runs its tests.

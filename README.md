@@ -48,8 +48,13 @@ nothing and repeats nothing.
 - **The reply Trigger** ([`src/review-replies.ts`](src/review-replies.ts)): the Slack connector's
   `threadReplyCreated` Trigger. It keeps each reviewer reply in a durable inbox, finds the review by its thread, and
   sends the reply to that session as `[slack <ts>] <@user>: <text>`.
-- **Two harnesses**: pi ([`src/pi-agent.ts`](src/pi-agent.ts), Dex's built-in agent loop with pi-ai) and the Claude
-  Agent SDK ([`src/claude-agent.ts`](src/claude-agent.ts)). Both use the same prompt, tools and Trigger.
+- **Three harnesses**, with the same prompt, tools and Trigger:
+
+  | Harness | Code | Runs |
+  | --- | --- | --- |
+  | pi: Dex's built-in agent loop with pi-ai | [`src/pi-agent.ts`](src/pi-agent.ts) | Locally (`npm start`) and on Dex Cloud |
+  | Claude Agent SDK: the Claude Code CLI | [`src/claude-agent.ts`](src/claude-agent.ts) | Locally (`npm start`) |
+  | Eino: an Eino ADK ChatModelAgent on the Dex Eino adapter, in Go | [`eino/`](eino) | Locally (`make run-eino`) |
 
 A review goes like this:
 
@@ -103,11 +108,13 @@ You need Node.js 22.19 or later (24 recommended, see `.nvmrc`) and
        `SIGNUP_AGENT_PI_PROTOCOL=anthropic`.
      - Or `SIGNUP_AGENT_HARNESS=claude-agent-sdk`, after signing in to Claude Code once (`claude`, then `/login`),
        or with `SIGNUP_AGENT_CLAUDE_AUTH=api-key` and `ANTHROPIC_API_KEY`.
+     - Or the Eino harness: `SIGNUP_AGENT_EINO_BASE_URL`, `SIGNUP_AGENT_EINO_MODEL` and `SIGNUP_AGENT_EINO_API_KEY`
+       of an OpenAI-compatible endpoint or, with `SIGNUP_AGENT_EINO_PROTOCOL=anthropic`, an Anthropic-compatible one.
 
    An inconsistent model setting stops the start with a message that says what to set. All variables and the model
    rules are in [docs/reference.md](docs/reference.md#configuration).
-5. **Start the agent:** `npm ci && npm start`. It reviews every pending sign-up registered since
-   `SIGNUP_REVIEW_SINCE`. Stop it with Ctrl+C at any time. The sessions wait in Dex, and replies already delivered
+5. **Start the agent:** `npm ci && npm start`, or `make run-eino` for the Eino harness (Go 1.26 or later). It reviews
+   every pending sign-up registered since `SIGNUP_REVIEW_SINCE`. Stop it with Ctrl+C at any time. The sessions wait in Dex, and replies already delivered
    to the inbox continue after a restart. If a reply's delivery failed while the agent was down, the admin must
    post it again.
 6. **Review in Slack:** reply in the review's thread with `approve`, `reject <reason>`, or what to change in the
@@ -116,8 +123,8 @@ You need Node.js 22.19 or later (24 recommended, see `.nvmrc`) and
 Each harness has its own session Flow type. Finish the open reviews before you switch harnesses, or switch back to
 let them finish.
 
-**Tests:** `npm test` runs the scenario suite of both harnesses, and `make test-app` runs the app tests. Neither
-calls a real model, Slack, Gmail or GitHub. See [docs/reference.md](docs/reference.md#tests).
+**Tests:** `npm test` runs the scenario suite of the pi and Claude Agent SDK harnesses, `make test-eino` the Eino
+harness's suite and crash tests, and `make test-app` the app tests. None calls a real model, Slack, Gmail or GitHub. See [docs/reference.md](docs/reference.md#tests).
 
 ## Run it on Dex Cloud
 
