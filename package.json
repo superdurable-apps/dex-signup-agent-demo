@@ -19,7 +19,7 @@
     "@earendil-works/pi-agent-core": "1.5.1",
     "@earendil-works/pi-ai": "1.5.1",
     "@earendil-works/pi-schema": "1.5.1",
-    "@superdurable/connector-google-gmail": "0.4.0",
+    "@superdurable/connector-google-gmail": "0.5.1",
     "@superdurable/connector-slack": "0.8.0",
     "@superdurable/connectors-sdk": "0.11.0",
     "@superdurable/dex": "1.45.6",
