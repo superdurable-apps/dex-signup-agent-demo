@@ -233,6 +233,48 @@ func TestARefusalOnARetryThatFindsNoCheckpointIsUnknown(t *testing.T) {
 	}
 }
 
+// A tool's own definite failure after its write, in the same attempt, stays a failure, as the TypeScript tools'
+// ToolExecutionError is recorded. The tool's Call is its write's, so the attempt's fence claimed the send that reached
+// the provider, and sdkgo's own agent-tool classification would mark the failed branch unknown; the Go connector tool
+// source records a branch as the tool lists it.
+func TestAToolsDefiniteFailureAfterItsWriteInTheSameAttemptStaysAFailure(t *testing.T) {
+	// Gmail rejects the send after the fence's claim: nothing was sent.
+	harness := newRetryHarness(t)
+	harness.stub.DecideElsewhere("acct1", "active")
+	harness.storeResult("post_review", `{"draft":{"number":1},"email":{"body":"Hi Ada","subject":"Welcome"},"thread":{"ts":"1710000100.000100"}}`)
+	harness.gmail.answer = func(request recordedRequest) (*http.Response, error) {
+		if isGmailSend(request) {
+			return jsonResponse(400, map[string]any{"error": map[string]any{"code": 400, "message": "Invalid To header"}}), nil
+		}
+		return jsonResponse(404, map[string]any{}), nil
+	}
+	send := harness.toolStep("send_welcome_email", "step-send")
+	outcome, err := send.attempt(t, `{}`)
+	var toolError *dexagents.ToolExecutionError
+	if !errors.As(err, &toolError) || !strings.HasPrefix(toolError.Message, "gmail sendMessage returned failed: PROVIDER_REJECTION: send_welcome_email failed and nothing was sent: ") {
+		t.Fatalf("the rejected send is not a failure: %#v, %v", outcome, err)
+	}
+	if sends := harness.gmail.matching(isGmailSend); len(sends) != 1 {
+		t.Fatalf("sends = %d", len(sends))
+	}
+
+	// The ReviewAPI refuses the approval, and the tool posts the failure in the thread.
+	harness = newRetryHarness(t)
+	harness.stub.SetRefusesSuppressedMail(true)
+	harness.storeResult("post_review", `{"draft":{"number":1},"email":{"body":"Hi Ada","subject":"Welcome"},"thread":{"ts":"1710000100.000100"}}`)
+	harness.slack.answer = func(request recordedRequest) (*http.Response, error) {
+		return jsonResponse(200, map[string]any{"ok": true, "channel": "CREVIEWS01", "ts": "1710000100.000900", "message": map[string]any{"ts": "1710000100.000900", "text": "Approval failed."}}), nil
+	}
+	approve := harness.toolStep("approve_account", "step-approve")
+	outcome, err = approve.attempt(t, `{}`)
+	if !errors.As(err, &toolError) || toolError.Message != "slack postThreadReply returned failed: PROVIDER_REJECTION: approve_account failed: the review API refused the decision: ReviewAPI approve: suppressApprovedMail is not supported yet (thread note: posted)" {
+		t.Fatalf("the refused approval is not a failure: %#v, %v", outcome, err)
+	}
+	if posts := harness.slack.matching(isPost); len(posts) != 1 {
+		t.Fatalf("posts = %d", len(posts))
+	}
+}
+
 func checkpointText(checkpoint *string) string {
 	if checkpoint == nil {
 		return "none"

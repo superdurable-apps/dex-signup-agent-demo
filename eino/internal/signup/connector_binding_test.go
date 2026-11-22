@@ -1,7 +1,7 @@
 package signup_test
 
 // The connector tools as sdkgo AgentTools over the connector mocks, in a fake tool Step: each tool's checks, its one
-// wrapped connector call under the connector's own call identity, and the branch its result takes.
+// connector write under the connector operation's own call identity, and the branch its result takes.
 
 import (
 	"context"
@@ -99,13 +99,14 @@ func TestPostReviewPostsOnceUnderTheConnectorsCallIdentityAndRecordsTheThread(t 
 	if !strings.Contains(calls[0].Input.Text, "Ada &lt;Lovelace&gt;") || !strings.Contains(calls[0].Input.Text, "Builds &lt;things&gt;") || !strings.HasSuffix(calls[0].Input.Text, "_Reviewed by eino · Dex session `signup-review-acct1`_") {
 		t.Fatalf("text = %q", calls[0].Input.Text)
 	}
-	// The wrapped call has the connector operation's own call identity, as a plain connector tool call would.
+	// The tool's call has the connector operation's own call identity and idempotency key, as a plain connector tool
+	// call would.
 	direct := singledispatchtest.NewContext("signup-review-acct1", "step-1")
-	if _, err := signup.RunConnectorAttempt(direct, harness.slack.Connection().Operations().PostChannelMessage(), harness.slack.Connection().Reference(), slack.PostChannelMessageInput{ChannelID: "C", Text: "x"}, 3); err != nil {
+	if _, err := sdkgo.RunMutation(direct, harness.slack.Connection().Operations().PostChannelMessage(), harness.slack.Connection().Reference(), slack.PostChannelMessageInput{ChannelID: "C", Text: "x"}, sdkgo.WithMaxSends(3)); err != nil {
 		t.Fatal(err)
 	}
-	if calls := harness.slack.PostChannelMessage().Calls(); calls[1].CallID != calls[0].CallID {
-		t.Fatalf("call IDs %s and %s differ", calls[0].CallID, calls[1].CallID)
+	if calls := harness.slack.PostChannelMessage().Calls(); calls[1].CallID != calls[0].CallID || calls[1].IdempotencyKey != calls[0].IdempotencyKey {
+		t.Fatalf("calls %+v and %+v differ", calls[0], calls[1])
 	}
 }
 

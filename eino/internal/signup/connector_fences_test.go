@@ -21,6 +21,7 @@ import (
 	slack "github.com/superdurable/dex-connectors-library/connectors/slack/go"
 	"github.com/superdurable/dex-connectors-library/sdkgo"
 	"github.com/superdurable/dex-connectors-library/sdkgo/singledispatchtest"
+	"github.com/superdurable/dex/sdk-go/dex"
 
 	"github.com/superdurable-apps/dex-signup-agent-demo/eino/internal/signup"
 	"github.com/superdurable-apps/dex-signup-agent-demo/eino/internal/signuptest"
@@ -105,11 +106,45 @@ func gmailOperations(t *testing.T, provider *fakeProvider) gmail.Operations {
 	return connection.Operations()
 }
 
+// runConnectorAttempt runs one attempt of operation in the tool Step step as a plain connector tool call runs it:
+// sdkgo.RunMutation gives the Call, with the operation's call identity and idempotency key and the send cap 3, and the
+// operation's Invoke runs once with it. The attempt is read with signup.OutcomeOf, as a connector tool reads it.
+func runConnectorAttempt[IN, OUT any](step dex.Context, operation sdkgo.Mutation[IN, OUT], connection sdkgo.ConnectionRef, input IN) (signup.ConnectorOutcome, error) {
+	reading := &readingMutation[IN, OUT]{operation: operation}
+	if _, err := sdkgo.RunMutation(step, reading, connection, input, sdkgo.WithMaxSends(3)); err != nil && !reading.hasInvoked {
+		return signup.ConnectorOutcome{}, err
+	}
+	return reading.outcome, reading.err
+}
+
+// readingMutation is operation as it is; it keeps how the attempt it ran reads.
+type readingMutation[IN, OUT any] struct {
+	operation  sdkgo.Mutation[IN, OUT]
+	hasInvoked bool
+	outcome    signup.ConnectorOutcome
+	err        error
+}
+
+func (reading *readingMutation[IN, OUT]) Definition() sdkgo.MutationDefinition {
+	return reading.operation.Definition()
+}
+
+func (reading *readingMutation[IN, OUT]) IdempotencyKey(callID sdkgo.CallID, input IN) sdkgo.IdempotencyKey {
+	return reading.operation.IdempotencyKey(callID, input)
+}
+
+func (reading *readingMutation[IN, OUT]) Invoke(call sdkgo.Call, input IN) sdkgo.MutationAttempt[OUT] {
+	attempt := reading.operation.Invoke(call, input)
+	reading.hasInvoked = true
+	reading.outcome, reading.err = signup.OutcomeOf(attempt)
+	return attempt
+}
+
 // attemptOutcome runs one attempt of operation in the Step context, with the call identity, idempotency key and send
 // cap the session's tool Step gives it, and reads it as a tool does.
 func attemptOutcome[IN, OUT any](t *testing.T, step *singledispatchtest.Context, operation sdkgo.Mutation[IN, OUT], connection sdkgo.ConnectionRef, input IN) signup.ConnectorOutcome {
 	t.Helper()
-	outcome, err := signup.RunConnectorAttempt(step, operation, connection, input, 3)
+	outcome, err := runConnectorAttempt(step, operation, connection, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,10 +152,10 @@ func attemptOutcome[IN, OUT any](t *testing.T, step *singledispatchtest.Context,
 }
 
 func kindOf(outcome signup.ConnectorOutcome) string {
-	if outcome.Kind == "branch" {
+	if outcome.Kind == sdkgo.AttemptKindBranch {
 		return string(outcome.Branch)
 	}
-	return outcome.Kind
+	return string(outcome.Kind)
 }
 
 var (
@@ -268,7 +303,7 @@ func TestASlackNoteWhoseAnswerWasLostIsUnknownNotNotPosted(t *testing.T) {
 	}}
 	reply := slackOperations(t, provider).PostThreadReply()
 	result := attemptOutcome(t, singledispatchtest.NewContext("signup-review-acct1", "step-1"), reply, slackConnection, replyInput)
-	if result.Kind != "retry" {
+	if result.Kind != sdkgo.AttemptKindRetry {
 		t.Fatalf("result = %s", kindOf(result))
 	}
 	if signup.ConfirmationStateOf(result) != signup.ConfirmationUnknown {
@@ -333,7 +368,7 @@ func TestAWorkerKilledAfterGmailAcceptedTheSendSendsNoSecondEmail(t *testing.T) 
 		return nil, errors.New("the Worker was killed after Gmail accepted the send")
 	}
 	// The attempt's outcome is lost with its Worker.
-	_, _ = signup.RunConnectorAttempt(step, gmailOperations(t, killed).SendMessage(), gmailConnection, emailInput, 3)
+	_, _ = runConnectorAttempt(step, gmailOperations(t, killed).SendMessage(), gmailConnection, emailInput)
 	if !strings.Contains(string(claim), `"state":"claimed"`) {
 		t.Fatalf("the checkpoint at the send is not the fence's claim: %s", claim)
 	}

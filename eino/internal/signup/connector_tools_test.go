@@ -53,21 +53,27 @@ func TestTheConnectorsDeclareASendCapOf3(t *testing.T) {
 }
 
 func TestADecisionToolsNoteIsPostedNotPostedOrUnknownFromTheSlackAttempt(t *testing.T) {
-	failure := &sdkgo.Failure{Kind: sdkgo.FailureTransport, Provider: "slack", Operation: "postThreadReply", Message: "x"}
+	failure := sdkgo.Failure{Kind: sdkgo.FailureTransport, Provider: "slack", Operation: "postThreadReply", Message: "x"}
+	posted := slack.PostMessageOutput{Message: slack.Message{ChannelID: "C", Timestamp: "1710000100.000200"}}
 	for _, check := range []struct {
-		outcome signup.ConnectorOutcome
+		attempt sdkgo.MutationAttempt[slack.PostMessageOutput]
 		want    signup.ConfirmationState
 	}{
-		{signup.ConnectorOutcome{Kind: "branch", Branch: "sent"}, signup.ConfirmationPosted},
+		{sdkgo.NewMutationBranch("sent", posted, nil, sdkgo.Receipt{}), signup.ConfirmationPosted},
 		// Slack selects these only when nothing of the call went out.
-		{signup.ConnectorOutcome{Kind: "branch", Branch: "providerRejected", Failure: failure}, signup.ConfirmationNotPosted},
-		{signup.ConnectorOutcome{Kind: "branch", Branch: sdkgo.DefectBranchID, Failure: failure}, signup.ConfirmationNotPosted},
+		{sdkgo.NewMutationBranch("providerRejected", slack.PostMessageOutput{}, &failure, sdkgo.Receipt{}), signup.ConfirmationNotPosted},
+		{sdkgo.NewMutationBranch(sdkgo.DefectBranchID, slack.PostMessageOutput{}, &failure, sdkgo.Receipt{}), signup.ConfirmationNotPosted},
 		// A retry may follow a lost answer, and an uncertain post may be in the thread.
-		{signup.ConnectorOutcome{Kind: "retry", Failure: failure}, signup.ConfirmationUnknown},
-		{signup.ConnectorOutcome{Kind: "uncertain", Branch: sdkgo.UncertainBranchID, Failure: failure}, signup.ConfirmationUnknown},
+		{sdkgo.NewMutationRetry[slack.PostMessageOutput](failure, 0), signup.ConfirmationUnknown},
+		{sdkgo.NewMutationUncertain(slack.PostMessageOutput{}, failure, sdkgo.Receipt{}), signup.ConfirmationUnknown},
 	} {
-		if got := signup.ConfirmationStateOf(check.outcome); got != check.want {
-			t.Fatalf("%+v: %s, want %s", check.outcome, got, check.want)
+		// The tool reads the attempt through its accessors.
+		outcome, err := signup.OutcomeOf(check.attempt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := signup.ConfirmationStateOf(outcome); got != check.want {
+			t.Fatalf("%+v: %s, want %s", outcome, got, check.want)
 		}
 	}
 }

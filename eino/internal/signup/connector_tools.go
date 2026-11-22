@@ -40,18 +40,21 @@ func SignupConnectorToolPolicies() map[string]dexagents.ToolPolicy {
 	return policies
 }
 
-// ConnectorOutcome is what a tool learns from one attempt of its connector operation.
+// ConnectorOutcome is what a tool learns from one attempt of its connector operation, as OutcomeOf reads it.
 type ConnectorOutcome struct {
-	// Kind is "branch", "uncertain" or "retry".
-	Kind       string
-	Branch     sdkgo.BranchID
+	// Kind is sdkgo.AttemptKindBranch, AttemptKindUncertain or AttemptKindRetry.
+	Kind sdkgo.AttemptKind
+	// Branch is the branch of a branch attempt.
+	Branch sdkgo.BranchID
+	// Value is the value of a branch or uncertain attempt, as JSON.
 	Value      json.RawMessage
 	Failure    *sdkgo.Failure
 	RetryAfter time.Duration
+	Receipt    sdkgo.Receipt
 }
 
 func (outcome ConnectorOutcome) isSent() bool {
-	return outcome.Kind == "branch" && outcome.Branch == "sent"
+	return outcome.Kind == sdkgo.AttemptKindBranch && outcome.Branch == "sent"
 }
 
 // ConfirmationState is how a tool's own note in the review thread went: posted; notPosted, when nothing went out; or
@@ -74,7 +77,7 @@ func ConfirmationStateOf(outcome ConnectorOutcome) ConfirmationState {
 	if outcome.isSent() {
 		return ConfirmationPosted
 	}
-	if outcome.Kind == "branch" && (outcome.Branch == "providerRejected" || outcome.Branch == sdkgo.DefectBranchID) {
+	if outcome.Kind == sdkgo.AttemptKindBranch && (outcome.Branch == "providerRejected" || outcome.Branch == sdkgo.DefectBranchID) {
 		return ConfirmationNotPosted
 	}
 	return ConfirmationUnknown
@@ -542,12 +545,12 @@ func signupConnectorTools(services *Services) []connectorTool {
 		if err != nil {
 			return connectorResult{}, err
 		}
-		if outcome.Kind == "retry" {
+		if outcome.Kind == sdkgo.AttemptKindRetry {
 			// An unknown outcome below the cap, or a send Gmail asked to retry: the Step's next attempt reads back Sent
 			// Mail and resends only while the sends stay below the cap.
 			return passOutcome(outcome), nil
 		}
-		if outcome.Kind == "branch" && outcome.Branch == "providerRejected" {
+		if outcome.Kind == sdkgo.AttemptKindBranch && outcome.Branch == "providerRejected" {
 			// Gmail conclusively rejected the message, so nothing was sent. Raised here, it is recorded as failed.
 			reason := "Gmail rejected the message"
 			if outcome.Failure != nil {

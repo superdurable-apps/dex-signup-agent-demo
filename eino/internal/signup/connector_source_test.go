@@ -83,10 +83,11 @@ func TestTheSourceRunsAToolsRefusalAsAFailureWithTheToolsTextAndASuccessAsItsRes
 			Heartbeat: func() error { return nil }, SaveHeartbeatCheckpoint: func(string) error { return nil },
 		})
 	}
-	// No review post yet: reply_in_thread refuses with its own text.
+	// No review post yet: reply_in_thread refuses with its own text, inside the source's text for the failed branch of
+	// the operation it writes with.
 	_, err := run(singledispatchtest.NewContext("signup-review-acct1", "step-1"), "reply_in_thread", `{"text":"hi"}`)
 	var toolError *dexagents.ToolExecutionError
-	if !errorsAs(err, &toolError) || !strings.HasSuffix(toolError.Message, "refused: call post_review first") {
+	if !errorsAs(err, &toolError) || toolError.Message != "slack postThreadReply returned failed: VALIDATION: refused: call post_review first" {
 		t.Fatalf("err = %v", err)
 	}
 	// The source checks the schema itself first.

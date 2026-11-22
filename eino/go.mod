@@ -14,7 +14,7 @@ require (
 	github.com/superdurable/dex/agents/go/core v0.6.16
 	github.com/superdurable/dex/agents/go/eino v0.6.16
 	github.com/superdurable/dex/blob-cache-go v0.1.2
-	github.com/superdurable/dex/sdk-go v1.45.6
+	github.com/superdurable/dex/sdk-go v1.45.16
 	google.golang.org/grpc v1.79.3
 )
 

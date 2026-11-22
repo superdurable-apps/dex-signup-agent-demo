@@ -185,8 +185,9 @@ Several layers keep a write from happening twice:
 - **Slack events.** Slack can send an event twice, and the durable inbox can deliver one again after a crash. Since
   `@superdurable/connectors-sdk` 0.11 the reply target sends each event with a request ID derived from its event ID
   (`Client.invokeRPCWithOptions` of `@superdurable/dex` 1.45.4), and Dex applies an RPC with a known request ID at
-  most once. A copy under another event ID still reaches the session, so the prompt's rule that a repeated
-  `[slack <ts>]` is ignored is the last guard.
+  most once. The Eino harness's target sends the same ID through the Go connector SDK's RPC target (sdkgo 0.40.0,
+  `sdkgo.WithTriggerRPCName("send_user_message")`). A copy under another event ID still reaches the session, so the
+  prompt's rule that a repeated `[slack <ts>]` is ignored is the last guard.
 
 ## Session records
 
@@ -387,13 +388,16 @@ running.
 The Go port keeps the TypeScript behaviour, texts and limits; `eino/internal/signup` holds it file by file. What
 differs:
 
-- Go's connector SDK does not let a tool read the attempt of the operation it calls, so each connector tool is an
-  application operation (such as `slack postReview`) that runs the wrapped Slack or Gmail operation through
-  `sdkgo.RunMutation`. The wrapped call keeps the connector's own call identity, idempotency key and fence. A
-  tool's refusal reaches the model inside the connector source's text, such as
-  `slack replyInThread returned failed: VALIDATION: refused: call post_review first`.
-- The Go connector SDK's Dex RPC target (sdkgo 0.39.0) sends no request ID, so the reply target sends each event to
-  its session with the request ID the TypeScript connector SDK derives from the event ID.
+- Each connector tool is an application Mutation over the Slack or Gmail operation it writes with, as the
+  TypeScript tools' `write()` is: it has that operation's definition and idempotency key, so it runs under the
+  operation's own call identity, idempotency key, send cap and fence, and its invoke calls the operation's `Invoke`
+  with the same call and reads the attempt (sdkgo 0.40.0's `Kind`, `Branch`, `Value` and `Failure`). The Go
+  connector tool source has no hook for a tool's own invoke, so the Mutation goes through it like a connector
+  operation. A Go `Invoke` cannot return an error, so a tool's refusal or definite failure is a `failed` branch that
+  the tool lists as rejected, and it reaches the model inside the connector source's text for that branch, such as
+  `slack postThreadReply returned failed: VALIDATION: refused: call post_review first`. The source records a branch
+  as the tool lists it, so a definite failure after a send in the same attempt (a decision's note, or a send Gmail
+  rejected) stays failed, as the TypeScript tools' `ToolExecutionError` does.
 - Each connector tool lists the connector's `defect` branch as an unknown outcome, as Dex Agents 0.6.14, which the
   TypeScript harnesses pin, records it; the Go connector tool source otherwise classifies by the branch's listing.
 - A tool's refusal or definite failure on a retried attempt of its tool Step is recorded `outcome_unknown` when an

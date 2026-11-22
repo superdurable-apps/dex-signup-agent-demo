@@ -11,6 +11,7 @@ import (
 	slack "github.com/superdurable/dex-connectors-library/connectors/slack/go"
 	"github.com/superdurable/dex-connectors-library/connectors/slack/go/slackmock"
 	"github.com/superdurable/dex-connectors-library/sdkgo"
+	dexagents "github.com/superdurable/dex/agents/go/core"
 	"github.com/superdurable/dex/sdk-go/dex"
 
 	"github.com/superdurable-apps/dex-signup-agent-demo/eino/internal/signup"
@@ -152,11 +153,24 @@ func (current *suite) sameEventTwice(t *testing.T) {
 	before := current.events.Acknowledged()
 	current.events.Push(reply.Message, reply.EventID)
 	current.pollUntil(t, "the repeat acknowledged", func() bool { return current.events.Acknowledged() > before })
+	current.pollUntil(t, "the repeat delivered", func() bool {
+		return len(current.logs.Find("trigger event delivered", "event_id", reply.EventID)) == 2
+	})
 	time.Sleep(time.Second)
 	current.waitForIdle(t, sessionID, 0)
 	equal(t, current.drafts(sessionID), 1)
 	if count := countPrefix(current.userTexts(t, sessionID), "[slack "+reply.TS+"]"); count != 1 {
 		t.Fatalf("the reply reached the session %d times", count)
+	}
+	// Both deliveries reached Dex with one request ID: the TypeScript harnesses' ID for send_user_message and the event.
+	requestID, err := sdkgo.TriggerRPCRequestID(dexagents.SendUserMessageRPCName, reply.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range current.logs.Find("trigger event delivered", "event_id", reply.EventID) {
+		if record.Attributes["request_id"] != requestID || record.Attributes["flow_id"] != sessionID || record.Attributes["target"] != "rpc" {
+			t.Fatalf("delivered %v, want request ID %s", record.Attributes, requestID)
+		}
 	}
 }
 

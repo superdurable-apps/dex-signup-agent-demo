@@ -1,11 +1,11 @@
 package signup_test
 
-// The reply target's routing, with a recording RPC invoker and a scripted thread index: which replies reach which
-// session, which are dropped, and which wait for a retry. Port of test/review-replies.test.ts.
+// The reply target's routing, with a recording session target and a scripted thread index: which replies reach which
+// session, which are dropped, and which wait for a retry. Port of test/review-replies.test.ts. The session target is
+// the Connector SDK's Dex RPC target; the scenario suite delivers through it to real sessions.
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -14,7 +14,6 @@ import (
 
 	slack "github.com/superdurable/dex-connectors-library/connectors/slack/go"
 	"github.com/superdurable/dex-connectors-library/sdkgo"
-	dexagents "github.com/superdurable/dex/agents/go/core"
 	"github.com/superdurable/dex/sdk-go/dex"
 	"google.golang.org/grpc/codes"
 
@@ -34,24 +33,22 @@ func reply(threadTS string, extra func(*slack.MessageEvent)) sdkgo.TriggerEvent[
 	return sdkgo.TriggerEvent[slack.MessageEvent]{ID: "Ev-" + threadTS + "-" + payload.UserID, OccurredAt: time.Now(), Payload: payload}
 }
 
-type invoked struct {
-	flowID    string
-	input     any
-	requestID string
+type delivered struct {
+	sessionID string
+	eventID   string
 }
 
-type recordingInvoker struct {
-	calls []invoked
-	err   error
+// recordingSessions stands in for the session targets: it records each delivery and returns err.
+type recordingSessions struct {
+	deliveries []delivered
+	err        error
 }
 
-// InvokeRPCWithOptions records the call; the target delivers each event with a request ID derived from its event ID.
-func (invoker *recordingInvoker) InvokeRPCWithOptions(_ context.Context, flowID string, _ any, input any, _ any, options dex.RPCInvokeOptions) error {
-	if options.RequestID == nil || *options.RequestID == "" {
-		return errors.New("no request ID")
-	}
-	invoker.calls = append(invoker.calls, invoked{flowID: flowID, input: input, requestID: *options.RequestID})
-	return invoker.err
+func (sessions *recordingSessions) deliverTo(sessionID string) sdkgo.TriggerTarget[slack.MessageEvent] {
+	return sdkgo.TriggerTargetFunc[slack.MessageEvent](func(_ context.Context, event sdkgo.TriggerEvent[slack.MessageEvent]) error {
+		sessions.deliveries = append(sessions.deliveries, delivered{sessionID: sessionID, eventID: event.ID})
+		return sessions.err
+	})
 }
 
 type scriptedIndex struct {
@@ -70,19 +67,19 @@ func (index *scriptedIndex) AccountOfThread(_ context.Context, threadTS string, 
 func (index *scriptedIndex) IsThreadDisputed(threadTS string) bool { return threadTS == disputedThread }
 
 type replyHarness struct {
-	target  sdkgo.TriggerTarget[slack.MessageEvent]
-	invoker *recordingInvoker
-	index   *scriptedIndex
-	logs    *signuptest.RecordingLogger
+	target   sdkgo.TriggerTarget[slack.MessageEvent]
+	sessions *recordingSessions
+	index    *scriptedIndex
+	logs     *signuptest.RecordingLogger
 }
 
 func newReplyHarness(threads map[string]string) replyHarness {
-	harness := replyHarness{invoker: &recordingInvoker{}, index: &scriptedIndex{threads: threads}, logs: signuptest.NewRecordingLogger()}
-	harness.target = signup.NewReviewReplyTarget(signup.ReviewReplyParts{
-		Client: harness.invoker, SendUserMessage: "send_user_message", Sessions: harness.index,
-		Channel: signup.ReviewChannel{ChannelID: "CREVIEWS01", ReviewerIDs: map[string]bool{"UREVIEWER1": true}},
-		Logger:  harness.logs.Logger(),
-	})
+	harness := replyHarness{sessions: &recordingSessions{}, index: &scriptedIndex{threads: threads}, logs: signuptest.NewRecordingLogger()}
+	harness.target = signup.NewReviewReplyTargetDeliveringTo(signup.ReviewReplyParts{
+		Sessions: harness.index,
+		Channel:  signup.ReviewChannel{ChannelID: "CREVIEWS01", ReviewerIDs: map[string]bool{"UREVIEWER1": true}},
+		Logger:   harness.logs.Logger(),
+	}, harness.sessions.deliverTo)
 	return harness
 }
 
@@ -101,9 +98,8 @@ func TestAReviewersReplyInAReviewThreadGoesToThatReviewsSession(t *testing.T) {
 	if err := harness.target.HandleTrigger(context.Background(), event); err != nil {
 		t.Fatal(err)
 	}
-	want := []invoked{{flowID: "signup-review-acct1", input: dexagents.AgentUserMessage{Text: "[slack 1710000200.000200] <@UREVIEWER1>: approve"}, requestID: signup.TriggerRPCRequestID("send_user_message", event.ID)}}
-	if !reflect.DeepEqual(harness.invoker.calls, want) {
-		t.Fatalf("invoked = %+v", harness.invoker.calls)
+	if want := []delivered{{sessionID: "signup-review-acct1", eventID: event.ID}}; !reflect.DeepEqual(harness.sessions.deliveries, want) {
+		t.Fatalf("delivered = %+v", harness.sessions.deliveries)
 	}
 	if got := signup.ReviewReplyText(event); got != "[slack 1710000200.000200] <@UREVIEWER1>: approve" {
 		t.Fatalf("text = %q", got)
@@ -111,9 +107,11 @@ func TestAReviewersReplyInAReviewThreadGoesToThatReviewsSession(t *testing.T) {
 }
 
 func TestTheRequestIDIsTheTypeScriptConnectorSDKs(t *testing.T) {
-	// The example of triggerRPCRequestId's documentation in @superdurable/connectors-sdk.
-	if got := signup.TriggerRPCRequestID("receiveReply", "Ev1"); got != "trigger-rpc-kDFFz9I4ELDtzXkmvRTzlA" {
-		t.Fatalf("request ID = %s", got)
+	// The session target sends sdkgo.TriggerRPCRequestID of send_user_message and the event ID, the request ID the
+	// TypeScript harnesses' target sends. This is the example of triggerRPCRequestId's documentation in
+	// @superdurable/connectors-sdk; the scenario suite checks the ID of each delivery.
+	if got, err := sdkgo.TriggerRPCRequestID("receiveReply", "Ev1"); err != nil || got != "trigger-rpc-kDFFz9I4ELDtzXkmvRTzlA" {
+		t.Fatalf("request ID = %s, %v", got, err)
 	}
 }
 
@@ -128,8 +126,8 @@ func TestAReplyOfSomeoneElseInAnotherChannelOrAtTheTopLevelIsFilteredWithoutALoo
 			t.Fatal(err)
 		}
 	}
-	if len(harness.invoker.calls) != 0 || len(harness.index.lookups) != 0 {
-		t.Fatalf("invoked %v, looked up %v", harness.invoker.calls, harness.index.lookups)
+	if len(harness.sessions.deliveries) != 0 || len(harness.index.lookups) != 0 {
+		t.Fatalf("delivered %v, looked up %v", harness.sessions.deliveries, harness.index.lookups)
 	}
 	if got := harness.count("trigger event skipped: filtered"); got != 3 {
 		t.Fatalf("filtered = %d", got)
@@ -149,8 +147,8 @@ func TestAReplyInAnOldThreadThatIsNoRunningReviewsIsDroppedInARecentOneItWaitsFo
 	if err == nil || !strings.Contains(err.Error(), "is not a known review thread yet") || sdkgo.IsTriggerUndeliverable(err) {
 		t.Fatalf("err = %v", err)
 	}
-	if len(harness.invoker.calls) != 0 {
-		t.Fatalf("invoked = %v", harness.invoker.calls)
+	if len(harness.sessions.deliveries) != 0 {
+		t.Fatalf("delivered = %v", harness.sessions.deliveries)
 	}
 }
 
@@ -159,8 +157,8 @@ func TestAReplyInAThreadTwoReviewsClaimIsDroppedAtOnceEvenWhenTheThreadIsRecent(
 	if err := harness.target.HandleTrigger(context.Background(), reply(disputedThread, nil)); err != nil {
 		t.Fatal(err)
 	}
-	if len(harness.invoker.calls) != 0 {
-		t.Fatalf("invoked = %v", harness.invoker.calls)
+	if len(harness.sessions.deliveries) != 0 {
+		t.Fatalf("delivered = %v", harness.sessions.deliveries)
 	}
 	if got := harness.count("trigger event skipped: two reviews claim the thread"); got != 1 {
 		t.Fatalf("skipped = %d", got)
@@ -168,23 +166,18 @@ func TestAReplyInAThreadTwoReviewsClaimIsDroppedAtOnceEvenWhenTheThreadIsRecent(
 }
 
 func TestAReplyForAClosedSessionIsUndeliverableAndOtherDexErrorsAreRetried(t *testing.T) {
+	// The session target classifies the Dex error (an event for a closed session is undeliverable, every other error
+	// is retried), and the reply target returns its result as it is, so the durable inbox consumes or keeps the event.
 	harness := newReplyHarness(map[string]string{"1710000100.000100": "acct1"})
-	harness.invoker.err = &dex.FlowNotActiveOrNotFoundError{ServiceError: &dex.ServiceError{Op: "InvokeRPC", Code: codes.NotFound}}
+	harness.sessions.err = sdkgo.MarkTriggerUndeliverable(&dex.FlowNotActiveOrNotFoundError{ServiceError: &dex.ServiceError{Op: "InvokeRPC", Code: codes.NotFound}})
 	if err := harness.target.HandleTrigger(context.Background(), reply("1710000100.000100", nil)); !sdkgo.IsTriggerUndeliverable(err) {
 		t.Fatalf("closed session: err = %v", err)
 	}
-	harness.invoker.err = &dex.ServiceError{Op: "InvokeRPC", Code: codes.Unavailable, Detail: "no Worker"}
+	harness.sessions.err = &dex.ServiceError{Op: "InvokeRPC", Code: codes.Unavailable, Detail: "no Worker"}
 	if err := harness.target.HandleTrigger(context.Background(), reply("1710000100.000100", nil)); err == nil || sdkgo.IsTriggerUndeliverable(err) {
 		t.Fatalf("unavailable: err = %v", err)
 	}
-	// The same event mapped to a different request is dropped with an error record.
-	event := reply("1710000100.000100", nil)
-	requestID := signup.TriggerRPCRequestID("send_user_message", event.ID)
-	harness.invoker.err = &dex.ServiceError{Op: "InvokeRPC", Code: codes.InvalidArgument, Detail: "request ID " + requestID + " was already used for a different request"}
-	if err := harness.target.HandleTrigger(context.Background(), event); !sdkgo.IsTriggerUndeliverable(err) {
-		t.Fatalf("conflict: err = %v", err)
-	}
-	if got := harness.count("trigger rpc request conflict; event dropped"); got != 1 {
-		t.Fatalf("conflict records = %d", got)
+	if got := len(harness.sessions.deliveries); got != 2 {
+		t.Fatalf("delivered %d times", got)
 	}
 }
