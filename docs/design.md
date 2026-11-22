@@ -90,7 +90,7 @@ mention anyone, and is cut with `…` past its limit.
 
 The Slack and Gmail tools are Dex connector tools from
 [`@superdurable/connector-slack`](https://www.npmjs.com/package/@superdurable/connector-slack) 0.8.0 and
-[`@superdurable/connector-google-gmail`](https://www.npmjs.com/package/@superdurable/connector-google-gmail) 0.4.0,
+[`@superdurable/connector-google-gmail`](https://www.npmjs.com/package/@superdurable/connector-google-gmail) 0.5.1,
 both built on `@superdurable/connectors-sdk` 0.11.0. Each tool call runs in its own Dex tool Step, under the
 connector's call identity and single-dispatch fence. approve_account and reject_account are Slack `postThreadReply`
 tools: the ReviewAPI decision, a plain HTTP call without a fence, runs first in the same Step, and the thread reply
@@ -125,17 +125,21 @@ On that attempt each connector decides from the Step's checkpoint:
   out; Slack reads it back and never resends it (a read-back that does not find it selects `uncertain`). Without a
   checkpointed `ts` it has nothing to read back, and resends with the same `client_msg_id` while the sends stay below
   the cap.
-- Gmail first searches Sent Mail for the message's Message-ID, which every attempt shares. A message found there is
-  the send; only when none is found does it resend, with the same Message-ID, while the sends stay below the cap.
+- Gmail first reads Sent Mail back. Every attempt sends the same Message-ID and repeats it in an `X-Dex-Message-ID`
+  header. Gmail replaces the Message-ID of the Sent copy with its own and cannot search custom headers, so the
+  connector lists up to 25 recent Sent Mail messages to the recipient and reads each one's headers
+  ([superdurable/dex-connectors-library#1061](https://github.com/superdurable/dex-connectors-library/pull/1061)).
+  A message whose `X-Dex-Message-ID` matches is the send; only when none matches does it resend, with the same
+  headers, while the sends stay below the cap.
 
 A definite failure (`providerRejected`, a refused request) is never resent. The text a tool builds before the
 dispatch is built again on each attempt from the same records; post_draft's footer follows the account's status at
 that attempt. test/connector-fences.test.ts runs the released operations with the real SDK fence over a fake
 transport and checks each of these.
 
-**After the cap.** When the possible sends reach 3 and the read-back still cannot confirm one, Slack selects
-`uncertain`, and Gmail keeps asking for a retry that only searches Sent Mail until the Step's attempts run out.
-Either way Dex records the call `outcome_unknown`, and the model gets Dex's fixed unknown-outcome text. Then:
+**After the cap.** When the possible sends reach 3 and the read-back still cannot confirm one, Slack and Gmail
+select `uncertain`. Dex records the call `outcome_unknown`, and the model gets Dex's fixed unknown-outcome text.
+Then:
 
 - post_review: the review may be in the channel. The tool refuses every later post_review, and the prompt tells the
   model never to call it again.
