@@ -50,7 +50,9 @@ type ConnectorOutcome struct {
 	RetryAfter time.Duration
 }
 
-func (outcome ConnectorOutcome) isSent() bool { return outcome.Kind == "branch" && outcome.Branch == "sent" }
+func (outcome ConnectorOutcome) isSent() bool {
+	return outcome.Kind == "branch" && outcome.Branch == "sent"
+}
 
 // ConfirmationState is how a tool's own note in the review thread went: posted; notPosted, when nothing went out; or
 // unknown, when it may have gone out. The model posts the outcome itself only for notPosted: a repost after unknown
@@ -97,7 +99,7 @@ type connectorResult struct {
 }
 
 func passOutcome(outcome ConnectorOutcome) connectorResult { return connectorResult{pass: &outcome} }
-func sentValue(value any) connectorResult               { return connectorResult{value: value} }
+func sentValue(value any) connectorResult                  { return connectorResult{value: value} }
 
 // outcomeUnknownError makes the call's outcome unknown without a retry: a decision whose request went out while the
 // ReviewAPI stayed busy or unreachable. The model gets only Dex's fixed unknown-outcome text.

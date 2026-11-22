@@ -20,7 +20,9 @@ type einoSignupTool struct {
 	callOf func(ctx context.Context) SignupToolCall
 }
 
-func (signupTool einoSignupTool) Info(context.Context) (*schema.ToolInfo, error) { return signupTool.info, nil }
+func (signupTool einoSignupTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return signupTool.info, nil
+}
 
 func (signupTool einoSignupTool) InvokableRun(ctx context.Context, arguments string, _ ...tool.Option) (string, error) {
 	return RunSignupTool(ctx, signupTool.tool, arguments, signupTool.callOf(ctx))

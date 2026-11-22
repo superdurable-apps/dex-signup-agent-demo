@@ -44,7 +44,9 @@ func TestFetchProfileRefusesNonHTTPSCredentialsOtherPortsAndPrivateOrLocalTarget
 }
 
 func TestAHostThatResolvesToAPrivateAddressIsRefusedBeforeAnyConnection(t *testing.T) {
-	lookup := func(context.Context, string) ([]netip.Addr, error) { return []netip.Addr{netip.MustParseAddr("10.0.0.7")}, nil }
+	lookup := func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("10.0.0.7")}, nil
+	}
 	_, err := signup.FetchPublicPage(context.Background(), "https://profile.example/", lookup, nil)
 	if err == nil || !strings.Contains(err.Error(), "private or local address") {
 		t.Fatalf("err = %v", err)
@@ -131,7 +133,9 @@ func TestTheRealTransportNeverConnectsToALocalServer(t *testing.T) {
 	defer server.Close()
 	_, port, _ := net.SplitHostPort(server.Listener.Addr().String())
 	// A name that resolves to the server's loopback address.
-	lookup := func(context.Context, string) ([]netip.Addr, error) { return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil }
+	lookup := func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+	}
 	if _, err := signup.FetchPublicPage(context.Background(), "https://profile.example/", lookup, nil); err == nil || !strings.Contains(err.Error(), "private or local address") {
 		t.Fatalf("err = %v", err)
 	}

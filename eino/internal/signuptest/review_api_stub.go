@@ -65,8 +65,8 @@ type ReviewAPIStub struct {
 	// refuseNextCall are operations whose next call is refused with failed_precondition and not applied.
 	refuseNextCall map[string]bool
 	// refusesSuppressedMail: as the server does until it can leave the platform's approval mail out.
-	refusesSuppressedMail     bool
-	failingGets               int
+	refusesSuppressedMail      bool
+	failingGets                int
 	getsFailingAfterLostAnswer int
 }
 

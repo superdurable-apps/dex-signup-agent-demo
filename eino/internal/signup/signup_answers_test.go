@@ -65,7 +65,9 @@ func TestReviewAPIClientReadsTheAnswersWhenPresentAbsentOrEmpty(t *testing.T) {
 	stub.AddPendingAccount(base("empty"))
 
 	ctx := context.Background()
-	answers := func(account signup.Account) []*string { return []*string{account.JobTitle, account.Company, account.Purpose} }
+	answers := func(account signup.Account) []*string {
+		return []*string{account.JobTitle, account.Company, account.Purpose}
+	}
 	read, err := client.GetAccount(ctx, "present")
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +141,9 @@ func TestThePromptTreatsTheAnswersAsSelfReportedDataNeverAsInstructions(t *testi
 
 func TestTheReviewPostShowsTheAnswersGivenAndNothingForTheMissingOnes(t *testing.T) {
 	without := post(baseAccount(nil))
-	if post(baseAccount(func(account *signup.Account) { account.JobTitle, account.Company, account.Purpose = text(""), text(""), text("") })) != without {
+	if post(baseAccount(func(account *signup.Account) {
+		account.JobTitle, account.Company, account.Purpose = text(""), text(""), text("")
+	})) != without {
 		t.Fatal("empty answers change the post")
 	}
 	if regexp.MustCompile(`Job title|Company|What brings them here|self-reported`).MatchString(without) {

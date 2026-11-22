@@ -124,8 +124,10 @@ func kindOf(outcome signup.ConnectorOutcome) string {
 }
 
 var (
-	isPost           = func(request recordedRequest) bool { return strings.HasSuffix(request.url, "/chat.postMessage") }
-	isGmailSend      = func(request recordedRequest) bool { return request.method == http.MethodPost && strings.Contains(request.url, "/messages/send") }
+	isPost      = func(request recordedRequest) bool { return strings.HasSuffix(request.url, "/chat.postMessage") }
+	isGmailSend = func(request recordedRequest) bool {
+		return request.method == http.MethodPost && strings.Contains(request.url, "/messages/send")
+	}
 	isSentMailSearch = func(request recordedRequest) bool {
 		decoded, _ := url.QueryUnescape(request.url)
 		return request.method == http.MethodGet && strings.Contains(decoded, "rfc822msgid:")
