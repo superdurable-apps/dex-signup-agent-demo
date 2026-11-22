@@ -312,7 +312,12 @@ func ConnectionsFile(directory, slackEndpoint, gmailEndpoint string) (string, er
 		connections = append(connections, map[string]any{
 			"connectorId": "gmail", "authMethodId": "google-oauth", "modulePath": "gmail", "provider": "google", "connectionName": "welcome-gmail",
 			"configuration": map[string]any{"endpoint": gmailEndpoint},
-			"credentials":   map[string]any{"auth_method": "google-oauth", "access_token": "ya29.test", "primary_email": "hello@example.com"},
+			"credentials": map[string]any{
+				"auth_method": "google-oauth", "oauth_client_id": "client-test", "oauth_client_secret": "client-secret-test",
+				"access_token": "ya29.test", "refresh_token": "refresh-test", "primary_email": "hello@example.com",
+			},
+			// A token that is not about to expire, so the connector never refreshes it.
+			"credentialExpiresAt": time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339),
 		})
 	}
 	contents, err := json.MarshalIndent(map[string]any{
