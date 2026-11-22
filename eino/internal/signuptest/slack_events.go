@@ -43,7 +43,8 @@ func (current *socket) write(value any) error {
 }
 
 // SlackEvents is Slack's side of Socket Mode: envelopes go to the open connection, or wait for the next one, as Slack
-// holds them.
+// holds them. It also serves the Web API calls of the real Slack connector, chat.postMessage and
+// conversations.replies, for the tests that run the tools on the real connector instead of its mock.
 type SlackEvents struct {
 	server       *httptest.Server
 	mutex        sync.Mutex
@@ -53,6 +54,66 @@ type SlackEvents struct {
 	envelopes    int
 	events       int
 	connections  int
+	posts        []SlackPost
+}
+
+// SlackPost is one chat.postMessage request the stand-in received.
+type SlackPost struct {
+	Channel     string
+	ThreadTS    string
+	Text        string
+	ClientMsgID string
+	// TS is the timestamp the stand-in gave the message.
+	TS string
+}
+
+// Posts are the chat.postMessage requests, oldest first.
+func (events *SlackEvents) Posts() []SlackPost {
+	events.mutex.Lock()
+	defer events.mutex.Unlock()
+	return append([]SlackPost(nil), events.posts...)
+}
+
+// postMessage records a post and answers it with a new timestamp: root posts get the next of 1720000000.000100,
+// 1720000100.000100, ..., replies their root's seconds and a counter.
+func (events *SlackEvents) postMessage(response http.ResponseWriter, request *http.Request) {
+	var body map[string]any
+	_ = json.NewDecoder(request.Body).Decode(&body)
+	text, _ := body["text"].(string)
+	channel, _ := body["channel"].(string)
+	threadTS, _ := body["thread_ts"].(string)
+	clientMsgID, _ := body["client_msg_id"].(string)
+	events.mutex.Lock()
+	ts := fmt.Sprintf("%d.000100", 1720000000+100*len(events.posts))
+	if threadTS != "" {
+		ts = fmt.Sprintf("%s.%06d", strings.Split(threadTS, ".")[0], 900+len(events.posts))
+	}
+	events.posts = append(events.posts, SlackPost{Channel: channel, ThreadTS: threadTS, Text: text, ClientMsgID: clientMsgID, TS: ts})
+	events.mutex.Unlock()
+	message := map[string]any{"ts": ts, "text": text, "user": AppBotUserID}
+	if threadTS != "" {
+		message["thread_ts"] = threadTS
+	}
+	writeJSON(response, map[string]any{"ok": true, "channel": channel, "ts": ts, "message": message})
+}
+
+// replies answers conversations.replies with the posts of the thread, so a read-back finds a post.
+func (events *SlackEvents) replies(response http.ResponseWriter, request *http.Request) {
+	threadTS := request.URL.Query().Get("ts")
+	events.mutex.Lock()
+	messages := []any{}
+	for _, post := range events.posts {
+		if post.TS == threadTS || post.ThreadTS == threadTS {
+			messages = append(messages, map[string]any{"ts": post.TS, "thread_ts": threadTS, "text": post.Text, "user": AppBotUserID})
+		}
+	}
+	events.mutex.Unlock()
+	writeJSON(response, map[string]any{"ok": true, "messages": messages, "has_more": false})
+}
+
+func writeJSON(response http.ResponseWriter, value any) {
+	response.Header().Set("content-type", "application/json")
+	_ = json.NewEncoder(response).Encode(value)
 }
 
 // StartSlackEvents starts the stand-in.
@@ -66,6 +127,10 @@ func StartSlackEvents() *SlackEvents {
 			_, _ = fmt.Fprintf(response, `{"ok":true,"url":"ws://%s/socket"}`, request.Host)
 		case "/socket":
 			events.serveSocket(upgrader, response, request)
+		case "/chat.postMessage":
+			events.postMessage(response, request)
+		case "/conversations.replies":
+			events.replies(response, request)
 		default:
 			response.Header().Set("content-type", "application/json")
 			_, _ = fmt.Fprint(response, `{"ok":false,"error":"unknown_method"}`)
