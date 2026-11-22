@@ -10,7 +10,7 @@ TESTS := 'apptest/*.test.ts'
 DEX_SERVER_ZD_BINARY ?= $(shell command -v dex-server-zd)
 export DEX_SERVER_ZD_BINARY
 
-.PHONY: bootstrap restored session-graphs check-fdg-v2 check-static test-app test
+.PHONY: bootstrap restored session-graphs check-fdg-v2 check-static test-app test run-eino test-eino
 # The platform starts bootstrap with the workspace; a second run waits for the
 # first, and every other target waits for a run in progress.
 bootstrap:
@@ -38,3 +38,13 @@ test-app: restored
 # The scenario suite of both harnesses (docs/reference.md, Tests); it needs dexcli and dex-server-zd on PATH.
 test: restored
 	npm test
+# The Eino harness (eino/, Go, local only): run-eino builds and runs its local process with .env; test-eino runs its
+# unit tests, scenario suite and crash tests on private Dex engines started with DEXCLI (dexcli dev, which bundles
+# dex-server-zd). RUN selects tests by name, as a go test -run regular expression.
+DEXCLI ?= $(shell command -v dexcli)
+export DEXCLI
+run-eino:
+	cd eino && GOWORK=off go build -o ../.local/bin/signup-eino ./cmd/signup-eino
+	SIGNUP_AGENT_HARNESS=eino ./.local/bin/signup-eino
+test-eino:
+	cd eino && GOWORK=off go vet ./... && GOWORK=off go test -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)') ./...
