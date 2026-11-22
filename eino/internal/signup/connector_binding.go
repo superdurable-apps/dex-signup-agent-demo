@@ -1,17 +1,18 @@
 package signup
 
-// How a connector tool runs inside its tool Step: each tool is an application Mutation that wraps the connector
-// operation it writes with. The Mutation runs the tool's checks, then the operation's one invocation, with the
-// connector's own call identity, idempotency key and single-dispatch fence, and returns the tool's result as its
-// branch. The Go connector tool source runs it like any connector operation (connectortools.NewConnectorTool).
+// How a connector tool runs inside its tool Step, as src/signup-agent.ts write() builds one: each tool is an
+// application Mutation over the connector operation it writes with. Its definition and idempotency key are the
+// operation's, with the tool's failed branch added, so sdkgo gives it the Call of a plain connector tool call of that
+// operation: the same Call ID, idempotency key, send cap and single-dispatch fence. Its Invoke runs the tool's checks,
+// then the operation's Invoke once with that Call, reads the attempt through the attempt's accessors (Kind, Branch,
+// Value, Failure) and returns the tool's own attempt. The Go connector tool source runs it like any connector
+// operation (connectortools.NewConnectorTool over sdkgo.NewMutationAgentTool).
 //
-// Why a wrapping Mutation instead of the TypeScript tools' own invoke: Go's sdkgo.MutationAttempt is opaque (its
-// fields are unexported), so a tool cannot read the attempt of the operation it calls through Invoke. It runs the
-// operation through sdkgo.RunMutation instead, which returns the branch, value and failure. sdkgo refuses a second
-// running call of the same operation in one Step attempt, so the wrapping Mutation has its own operation identity:
-// the connector's ID and the tool's name, such as slack postReview. The wrapped call keeps the connector operation's
-// identity, so its Call ID, idempotency key and fence are exactly those of a plain connector tool call.
-// WORKAROUND(dex-bugs.md#a-custom-go-connector-tool-cannot-read-the-attempt-of-the-operation-it-wraps)
+// Why a Mutation of the application's and not the connector's own agent tool: the Go connector tool source offers an
+// operation with that operation's input and result, and has no hook for a tool's own invoke, as the TypeScript
+// core's connectorTool has; these tools take their own arguments, run their own checks and return their own results.
+// A Go Invoke cannot return an error either, so a tool's refusal or definite failure is the failed branch, which the
+// tools list as rejected, where the TypeScript tools throw a ToolExecutionError.
 
 import (
 	"encoding/json"
@@ -22,60 +23,85 @@ import (
 	slack "github.com/superdurable/dex-connectors-library/connectors/slack/go"
 	"github.com/superdurable/dex-connectors-library/sdkgo"
 	dexagents "github.com/superdurable/dex/agents/go/core"
+	"github.com/superdurable/dex/agents/go/core/connectortools"
 	"github.com/superdurable/dex/sdk-go/dex"
 )
 
-// RunConnectorAttempt runs one attempt of operation in the tool Step's context ctx, with the connector's call
-// identity (derived from the Step's FlowID and StepExecutionID), its idempotency key and fence, and the call's send
-// cap, and reads the attempt as a tool does: its kind, branch, value and failure.
-func RunConnectorAttempt[IN, OUT any](ctx dex.Context, operation sdkgo.Mutation[IN, OUT], connection sdkgo.ConnectionRef, input IN, maxSends int32) (ConnectorOutcome, error) {
-	var options []sdkgo.RunOption
-	if maxSends > 1 && operation.Definition().RepeatOnUnknown == sdkgo.RepeatOnUnknownLimited {
-		options = append(options, sdkgo.WithMaxSends(maxSends))
-	}
-	result, err := sdkgo.RunMutation(ctx, operation, connection, input, options...)
-	if err != nil {
-		var retry *sdkgo.RetryError
-		if !errors.As(err, &retry) {
+// OutcomeOf reads one attempt of a connector operation as a tool does: its kind, branch, value as JSON, failure,
+// retry delay and receipt. A value that does not encode as JSON is an error.
+func OutcomeOf[OUT any](attempt sdkgo.MutationAttempt[OUT]) (ConnectorOutcome, error) {
+	outcome := ConnectorOutcome{Kind: attempt.Kind(), Branch: attempt.Branch(), Failure: attempt.Failure(), RetryAfter: attempt.RetryAfter(), Receipt: attempt.Receipt()}
+	if outcome.Kind == sdkgo.AttemptKindBranch || outcome.Kind == sdkgo.AttemptKindUncertain {
+		value, err := json.Marshal(attempt.Value())
+		if err != nil {
 			return ConnectorOutcome{}, err
 		}
-		failure := retry.Failure
-		outcome := ConnectorOutcome{Kind: "retry", Failure: &failure}
-		var retryAfter *dex.RetryAfterError
-		if errors.As(err, &retryAfter) {
-			outcome.RetryAfter = retryAfter.After
-		}
-		return outcome, nil
+		outcome.Value = value
 	}
-	value, err := json.Marshal(result.Value)
-	if err != nil {
-		return ConnectorOutcome{}, err
+	return outcome, nil
+}
+
+// attempt is the outcome as the tool's own attempt, with the operation's branch, value, failure and receipt.
+func (outcome ConnectorOutcome) attempt() sdkgo.MutationAttempt[json.RawMessage] {
+	switch {
+	case outcome.Kind == sdkgo.AttemptKindBranch:
+		return sdkgo.NewMutationBranch(outcome.Branch, outcome.Value, outcome.Failure, outcome.Receipt)
+	case outcome.Kind == sdkgo.AttemptKindUncertain && outcome.Failure != nil:
+		return sdkgo.NewMutationUncertain(outcome.Value, *outcome.Failure, outcome.Receipt)
+	case outcome.Kind == sdkgo.AttemptKindRetry && outcome.Failure != nil:
+		return sdkgo.NewMutationRetry[json.RawMessage](*outcome.Failure, outcome.RetryAfter)
+	default:
+		// A zero attempt, which sdkgo records as the operation's defect.
+		return sdkgo.MutationAttempt[json.RawMessage]{}
 	}
-	kind := "branch"
-	if result.Branch == sdkgo.UncertainBranchID {
-		kind = "uncertain"
+}
+
+// connectorWrite is the connector operation a tool writes with, on its connection, with the operation's input type
+// erased.
+type connectorWrite struct {
+	definition     sdkgo.MutationDefinition
+	connection     sdkgo.ConnectionRef
+	idempotencyKey func(sdkgo.CallID) sdkgo.IdempotencyKey
+	// invoke runs one attempt of the operation with the tool's Call and input, and reads it.
+	invoke func(call sdkgo.Call, input any) (ConnectorOutcome, error)
+}
+
+// writeWith is operation on connection as a tool's connectorWrite. The idempotency key is the operation's for the
+// Call ID, asked without an input as write() asks it in TypeScript: the Slack and Gmail operations derive it from the
+// Call ID alone.
+func writeWith[IN, OUT any](operation sdkgo.Mutation[IN, OUT], connection sdkgo.ConnectionRef) connectorWrite {
+	return connectorWrite{
+		definition: operation.Definition(), connection: connection,
+		idempotencyKey: func(callID sdkgo.CallID) sdkgo.IdempotencyKey {
+			var noInput IN
+			return operation.IdempotencyKey(callID, noInput)
+		},
+		invoke: func(call sdkgo.Call, input any) (ConnectorOutcome, error) {
+			return OutcomeOf(operation.Invoke(call, input.(IN)))
+		},
 	}
-	return ConnectorOutcome{Kind: kind, Branch: result.Branch, Value: value, Failure: result.Failure}, nil
 }
 
 // FailedBranch is the branch of a tool's own refusal or definite failure, and the failure's message is the tool's
 // text, such as "refused: call post_review first". It is not named refused: the source's text for it,
 // "<connector> <operation> returned <branch>: ...", must not read as a refusal when the tool's text is another
-// failure, such as send_welcome_email's "send_welcome_email failed and nothing was sent: ...".
+// failure, such as send_welcome_email's "send_welcome_email failed and nothing was sent: ...". The tools list it as
+// rejected, and the Go connector tool source records a branch as listed, also after a send in the same attempt (a
+// decision's note, or a send Gmail rejected). sdkgo's own AgentToolAttempt.Outcome marks it unknown then, since the
+// tool's Call is its write's and the fence saw the send; the source does not read that outcome.
 const FailedBranch sdkgo.BranchID = "failed"
 
-// signupMutation is one connector tool as an sdkgo Mutation.
+// signupMutation is one connector tool as an sdkgo Mutation over its connector write.
 type signupMutation struct {
 	tool       connectorTool
 	definition sdkgo.MutationDefinition
-	// write runs the wrapped connector operation once with input, inside the Step of ctx, with the call's send cap.
-	write func(ctx dex.Context, input any, maxSends int32) (ConnectorOutcome, error)
+	write      connectorWrite
 }
 
 func (mutation signupMutation) Definition() sdkgo.MutationDefinition { return mutation.definition }
 
 func (mutation signupMutation) IdempotencyKey(callID sdkgo.CallID, _ map[string]any) sdkgo.IdempotencyKey {
-	return sdkgo.IdempotencyKey(callID)
+	return mutation.write.idempotencyKey(callID)
 }
 
 func (mutation signupMutation) failure(kind sdkgo.FailureKind, message string) *sdkgo.Failure {
@@ -83,12 +109,20 @@ func (mutation signupMutation) failure(kind sdkgo.FailureKind, message string) *
 	return &sdkgo.Failure{Kind: kind, Provider: operation.ConnectorID, Operation: operation.OperationID, Message: message}
 }
 
-// Invoke runs one attempt of the tool.
+// Invoke runs one attempt of the tool. Its connector write is the operation's one Invoke with this Call; a second
+// would start the call's fence over, so the tool gets an error instead.
 func (mutation signupMutation) Invoke(call sdkgo.Call, arguments map[string]any) sdkgo.MutationAttempt[json.RawMessage] {
 	if problems := mutation.tool.validate(arguments); len(problems) > 0 {
 		return mutation.refused(call.Context, sdkgo.FailureValidation, fmt.Sprintf("invalid arguments for %s: %s", mutation.tool.name, joinProblems(problems)))
 	}
-	write := func(input any) (ConnectorOutcome, error) { return mutation.write(call.Context, input, call.MaxSends()) }
+	hasWritten := false
+	write := func(input any) (ConnectorOutcome, error) {
+		if hasWritten {
+			return ConnectorOutcome{}, errors.New("a connector tool makes one connector write per attempt")
+		}
+		hasWritten = true
+		return mutation.write.invoke(call, input)
+	}
 	result, err := mutation.tool.attempt(call.Context, call.Context.FlowID(), arguments, write)
 	if err != nil {
 		var toolError *dexagents.ToolExecutionError
@@ -103,20 +137,12 @@ func (mutation signupMutation) Invoke(call sdkgo.Call, arguments map[string]any)
 		case errors.As(err, &unknown):
 			return sdkgo.NewMutationUncertain[json.RawMessage](nil, *mutation.failure(sdkgo.FailureAvailability, unknown.message), sdkgo.Receipt{})
 		default:
-			// A defect of the wrapped call: Dex records outcome_unknown, as the connector tools record a defect.
+			// A defect of the tool or its write: Dex records outcome_unknown, as the connector tools record a defect.
 			return sdkgo.NewMutationBranch[json.RawMessage](sdkgo.DefectBranchID, nil, mutation.failure(sdkgo.FailureLocalDefect, messageOf(err)), sdkgo.Receipt{})
 		}
 	}
 	if result.pass != nil {
-		outcome := *result.pass
-		switch outcome.Kind {
-		case "retry":
-			return sdkgo.NewMutationRetry[json.RawMessage](*outcome.Failure, outcome.RetryAfter)
-		case "uncertain":
-			return sdkgo.NewMutationUncertain(outcome.Value, *outcome.Failure, sdkgo.Receipt{})
-		default:
-			return sdkgo.NewMutationBranch(outcome.Branch, outcome.Value, outcome.Failure, sdkgo.Receipt{})
-		}
+		return result.pass.attempt()
 	}
 	value, err := json.Marshal(result.value)
 	if err != nil {
@@ -142,7 +168,7 @@ func (mutation signupMutation) refused(ctx dex.Context, kind sdkgo.FailureKind, 
 }
 
 // mayHaveSentEarlier reports whether an earlier attempt of the tool Step may have sent the call's write, counted as
-// sdkgo's fence counts it from the checkpoint that attempt saved. The Step makes one fenced write, the wrapped call, so
+// sdkgo's fence counts it from the checkpoint that attempt saved. The Step makes one fenced write, the tool's, so
 // every marker in it is that call's. Without a readable marker, each earlier attempt may have sent once, as the fence
 // assumes: a missing checkpoint after attempt 1 proves nothing, since Dex may lose the latest one. sdkgo keeps
 // the checkpoint format to itself and offers no such read, so a test on the real fences guards it.
@@ -218,7 +244,7 @@ func joinProblems(problems []string) string {
 	return text
 }
 
-// sentBranchOf is the definition's required branch, "sent" for every wrapped operation.
+// sentBranchOf is the definition's required branch, "sent" for every operation the tools write with.
 func sentBranchOf(definition sdkgo.MutationDefinition) sdkgo.BranchID {
 	for _, branch := range definition.Branches {
 		if !branch.Optional {
@@ -228,23 +254,22 @@ func sentBranchOf(definition sdkgo.MutationDefinition) sdkgo.BranchID {
 	return "sent"
 }
 
-// toolDefinition is the wrapping Mutation's definition: the wrapped operation's branches, Step defaults and send cap,
-// under the tool's own operation identity, and the refused branch.
-func toolDefinition(wrapped sdkgo.MutationDefinition, connectorID, operationID string) sdkgo.MutationDefinition {
-	definition := wrapped
-	definition.Operation = sdkgo.OperationRef{ConnectorID: connectorID, OperationID: operationID}
-	definition.Branches = append(append([]sdkgo.BranchDefinition(nil), wrapped.Branches...),
+// toolDefinition is the tool's definition: the operation's, with its identity, branches, Step defaults and send cap,
+// and the failed branch.
+func toolDefinition(operation sdkgo.MutationDefinition) sdkgo.MutationDefinition {
+	definition := operation
+	definition.Branches = append(append([]sdkgo.BranchDefinition(nil), operation.Branches...),
 		sdkgo.BranchDefinition{ID: FailedBranch, Description: "The tool refused the call, or the call definitely failed.", Optional: true})
 	return definition
 }
 
-// toolMetadata is the wrapping Mutation's agent metadata. Its branch outcomes are those of the TypeScript
-// application's connector tools: a connector's defect is outcome_unknown, as Dex Agents 0.6.14 records it, so a write
-// that may have gone out is never told to the model as failed.
+// toolMetadata is the tool's agent metadata. Its branch outcomes are those of the TypeScript application's connector
+// tools: a connector's defect is outcome_unknown, as Dex Agents 0.6.14 records it, so a write that may have gone out
+// is never told to the model as failed.
 func toolMetadata(definition sdkgo.MutationDefinition, description, schema string) sdkgo.AgentToolMetadata {
 	return sdkgo.AgentToolMetadata{
 		Operation: definition.Operation, Kind: sdkgo.AgentOperationKindMutation,
-		ToolName:    definition.Operation.ConnectorID + "_" + lowerCamelToSnake(definition.Operation.OperationID),
+		ToolName:    connectortools.DefaultConnectorToolName(definition.Operation),
 		Description: description, RepeatOnUnknown: definition.RepeatOnUnknown, MaxSends: definition.MaxSends,
 		BranchOutcomes: map[sdkgo.BranchID]sdkgo.AgentBranchOutcome{
 			"providerRejected": sdkgo.AgentBranchOutcomeRejected, sdkgo.UncertainBranchID: sdkgo.AgentBranchOutcomeUnknown,
@@ -252,27 +277,6 @@ func toolMetadata(definition sdkgo.MutationDefinition, description, schema strin
 		},
 		InputType: "arguments", InputSchema: json.RawMessage(schema), Branches: definition.Branches, StepDefaults: definition.StepDefaults,
 	}
-}
-
-// lowerCamelToSnake is sdkgo's tool-name rule for the operation IDs this application uses (no acronyms).
-func lowerCamelToSnake(name string) string {
-	converted := []rune{}
-	for index, character := range name {
-		if character >= 'A' && character <= 'Z' {
-			if index > 0 {
-				converted = append(converted, '_')
-			}
-			character += 'a' - 'A'
-		}
-		converted = append(converted, character)
-	}
-	return string(converted)
-}
-
-// toolOperationIDs are the wrapping Mutations' operation IDs, from the tool names.
-var toolOperationIDs = map[string]string{
-	"post_review": "postReview", "post_draft": "postDraft", "reply_in_thread": "replyInThread",
-	"approve_account": "approveAccount", "reject_account": "rejectAccount", "send_welcome_email": "sendWelcomeEmail",
 }
 
 // SignupConnectorAgentTool is one connector tool as an sdkgo.AgentTool, with the tool's name.
@@ -291,27 +295,17 @@ func SignupConnectorAgentTools(services *Services, slackConnection slack.Connect
 		return nil, errors.New("the Slack and Gmail connections are required")
 	}
 	slackReference, gmailReference := slackConnection.Reference(), gmailConnection.Reference()
-	writes := map[string]struct {
-		wrapped    sdkgo.MutationDefinition
-		connection sdkgo.ConnectionRef
-		write      func(ctx dex.Context, input any, maxSends int32) (ConnectorOutcome, error)
-	}{
-		"postChannelMessage": {slack.PostChannelMessageDefinition, slackReference, func(ctx dex.Context, input any, maxSends int32) (ConnectorOutcome, error) {
-			return RunConnectorAttempt(ctx, slackOperations.PostChannelMessage(), slackReference, input.(slack.PostChannelMessageInput), maxSends)
-		}},
-		"postThreadReply": {slack.PostThreadReplyDefinition, slackReference, func(ctx dex.Context, input any, maxSends int32) (ConnectorOutcome, error) {
-			return RunConnectorAttempt(ctx, slackOperations.PostThreadReply(), slackReference, input.(slack.PostThreadReplyInput), maxSends)
-		}},
-		"sendMessage": {gmail.SendMessageDefinition, gmailReference, func(ctx dex.Context, input any, maxSends int32) (ConnectorOutcome, error) {
-			return RunConnectorAttempt(ctx, gmailOperations.SendMessage(), gmailReference, input.(gmail.SendMessageInput), maxSends)
-		}},
+	writes := map[string]connectorWrite{
+		"postChannelMessage": writeWith(slackOperations.PostChannelMessage(), slackReference),
+		"postThreadReply":    writeWith(slackOperations.PostThreadReply(), slackReference),
+		"sendMessage":        writeWith(gmailOperations.SendMessage(), gmailReference),
 	}
 	var tools []SignupConnectorAgentTool
 	for _, tool := range signupConnectorTools(services) {
-		wrapped := writes[tool.operationID]
-		definition := toolDefinition(wrapped.wrapped, wrapped.wrapped.Operation.ConnectorID, toolOperationIDs[tool.name])
+		write := writes[tool.operationID]
+		mutation := signupMutation{tool: tool, definition: toolDefinition(write.definition), write: write}
 		agentTool, err := sdkgo.NewMutationAgentTool[map[string]any, json.RawMessage](
-			signupMutation{tool: tool, definition: definition, write: wrapped.write}, wrapped.connection, toolMetadata(definition, tool.description, tool.schema))
+			mutation, write.connection, toolMetadata(mutation.definition, tool.description, tool.schema))
 		if err != nil {
 			return nil, fmt.Errorf("connector tool %s: %w", tool.name, err)
 		}

@@ -42,7 +42,7 @@ func TestTheProviderStandInsAnswerTheRealConnectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	step := singledispatchtest.NewContext("signup-review-acct1", "step-1")
-	posted, err := signup.RunConnectorAttempt(step, slackConnection.Operations().PostChannelMessage(), slackConnection.Reference(), slack.PostChannelMessageInput{ChannelID: "CREVIEWS01", Text: "review"}, 3)
+	posted, err := runConnectorAttempt(step, slackConnection.Operations().PostChannelMessage(), slackConnection.Reference(), slack.PostChannelMessageInput{ChannelID: "CREVIEWS01", Text: "review"})
 	if err != nil || kindOf(posted) != "sent" {
 		t.Fatalf("post = %+v, %v", posted, err)
 	}
@@ -55,7 +55,7 @@ func TestTheProviderStandInsAnswerTheRealConnectors(t *testing.T) {
 	cancel := send.SetDeadline(time.Now().Add(2 * time.Second))
 	defer cancel()
 	go func() {
-		outcome, _ := signup.RunConnectorAttempt(send, gmailConnection.Operations().SendMessage(), gmailConnection.Reference(), gmail.SendMessageInput{To: []string{"ada@example.com"}, Subject: "Welcome", TextBody: "Hi"}, 3)
+		outcome, _ := runConnectorAttempt(send, gmailConnection.Operations().SendMessage(), gmailConnection.Reference(), gmail.SendMessageInput{To: []string{"ada@example.com"}, Subject: "Welcome", TextBody: "Hi"})
 		done <- outcome
 	}()
 	var first signup.ConnectorOutcome

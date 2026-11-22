@@ -5,9 +5,6 @@ package signup
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -20,7 +17,6 @@ import (
 	"github.com/superdurable/dex-connectors-library/sdkgo/projectconfig/provider"
 	dexagents "github.com/superdurable/dex/agents/go/core"
 	"github.com/superdurable/dex/sdk-go/dex"
-	"google.golang.org/grpc/codes"
 )
 
 // ReviewSlackConnection is the Slack connection the review posts, replies and Trigger use.
@@ -49,11 +45,6 @@ func ReviewReplyText(event sdkgo.TriggerEvent[slack.MessageEvent]) string {
 	return fmt.Sprintf("[slack %s] <@%s>: %s", event.Payload.Timestamp, event.Payload.UserID, jsTrim(event.Payload.Text))
 }
 
-// RPCInvoker invokes one RPC with options: the Dex Client.
-type RPCInvoker interface {
-	InvokeRPCWithOptions(ctx context.Context, flowID string, rpc any, input any, outputPtr any, options dex.RPCInvokeOptions) error
-}
-
 // ThreadIndex maps a review thread to its account; ReviewSessions is the real one.
 type ThreadIndex interface {
 	AccountOfThread(ctx context.Context, threadTS string, since time.Time) (string, error)
@@ -62,9 +53,9 @@ type ThreadIndex interface {
 
 // ReviewReplyParts is what the reply target reaches.
 type ReviewReplyParts struct {
-	Client RPCInvoker
+	Client *dex.Client
 	// SendUserMessage is the session Flow's send_user_message RPC, flow.SendUserMessage.
-	SendUserMessage any
+	SendUserMessage dex.RPC[dexagents.AgentUserMessage, bool]
 	Sessions        ThreadIndex
 	Channel         ReviewChannel
 	Logger          *slog.Logger
@@ -75,83 +66,19 @@ type ReviewReplyParts struct {
 	Now func() time.Time
 }
 
-// SendUserMessageRPCName is the wire name of the session Flow's send_user_message RPC, which feeds request IDs.
-const SendUserMessageRPCName = "send_user_message"
-
-// TriggerRPCRequestIDPrefix starts every request ID the reply target derives.
-const TriggerRPCRequestIDPrefix = "trigger-rpc-"
-
-// TriggerRPCRequestID is the Dex request ID of every delivery attempt of one event, as the TypeScript connector SDK's
-// triggerRPCRequestId derives it: the prefix and the first 16 bytes, unpadded base64url, of the SHA-256 digest of the
-// RPC name, one 0x00 byte, and the event ID.
-func TriggerRPCRequestID(rpcName, eventID string) string {
-	digest := sha256.Sum256([]byte(rpcName + "\x00" + eventID))
-	return TriggerRPCRequestIDPrefix + base64.RawURLEncoding.EncodeToString(digest[:16])
-}
-
-// undeliverableTriggerMessage starts the message of an sdkgo UndeliverableTriggerError, which a handler can return.
-const undeliverableTriggerMessage = "Trigger event is undeliverable"
-
-// classifyDexRPCError marks the Dex errors that no retry of the same event can fix, as sdkgo's Dex targets do: a
-// closed or never-started Flow, an RPC handler's own undeliverable error, and an input that cannot be encoded.
-func classifyDexRPCError(err error) error {
-	if err == nil || sdkgo.IsTriggerUndeliverable(err) {
-		return err
-	}
-	var notActiveOrNotFound *dex.FlowNotActiveOrNotFoundError
-	var notFound *dex.FlowNotFoundError
-	if errors.As(err, &notActiveOrNotFound) || errors.As(err, &notFound) {
-		return sdkgo.MarkTriggerUndeliverable(err)
-	}
-	var workerFailure *dex.WorkerInvocationError
-	if errors.As(err, &workerFailure) {
-		if workerFailure.Worker != nil && workerFailure.Worker.Code == codes.FailedPrecondition && strings.HasPrefix(workerFailure.Worker.Detail, undeliverableTriggerMessage) {
-			return sdkgo.MarkTriggerUndeliverable(err)
-		}
-		return err
-	}
-	var mappingFailure *dex.ValueMappingError
-	if errors.As(err, &mappingFailure) && mappingFailure.Operation == "encode" {
-		return sdkgo.MarkTriggerUndeliverable(err)
-	}
-	return err
-}
-
-func isRequestIDUsedForDifferentRequest(err error, requestID string) bool {
-	var serviceError *dex.ServiceError
-	return errors.As(err, &serviceError) && serviceError.Code == codes.InvalidArgument &&
-		strings.Contains(serviceError.Detail, "request ID "+requestID+" was already used for a different request")
-}
-
-// sessionRPCTarget invokes send_user_message on the resolved session with a request ID derived from the event ID, so
-// a redelivered event (a durable inbox replay, a Slack retry) applies at most once while the session keeps that
-// request ID. It is the Go counterpart of the TypeScript connector SDK's newDexRPCTriggerTarget; sdkgo's Go target
-// sends no request ID.
-// WORKAROUND(dex-bugs.md#sdkgo-dex-rpc-trigger-target-sends-no-request-id)
-func sessionRPCTarget(parts ReviewReplyParts, logger *slog.Logger, sessionID string) sdkgo.TriggerTarget[slack.MessageEvent] {
-	return sdkgo.TriggerTargetFunc[slack.MessageEvent](func(ctx context.Context, event sdkgo.TriggerEvent[slack.MessageEvent]) error {
-		if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(event.ID) == "" {
-			return sdkgo.MarkTriggerUndeliverable(errors.New("RPC trigger requires Flow ID and event ID"))
-		}
-		requestID := TriggerRPCRequestID(SendUserMessageRPCName, event.ID)
-		var isQueued bool
-		err := parts.Client.InvokeRPCWithOptions(ctx, sessionID, parts.SendUserMessage, dexagents.AgentUserMessage{Text: ReviewReplyText(event)}, &isQueued,
-			dex.RPCInvokeOptions{RequestID: &requestID})
-		if err == nil {
-			logger.DebugContext(ctx, "trigger event delivered", "event_id", event.ID, "flow_id", sessionID, "request_id", requestID)
-			return nil
-		}
-		var mappingFailure *dex.ValueMappingError
-		if errors.As(err, &mappingFailure) && mappingFailure.Operation == "decode" {
-			logger.WarnContext(ctx, "trigger event delivered; rpc response undecodable", "event_id", event.ID, "flow_id", sessionID, "request_id", requestID, "error", err.Error())
-			return nil
-		}
-		if isRequestIDUsedForDifferentRequest(err, requestID) {
-			logger.ErrorContext(ctx, "trigger rpc request conflict; event dropped", "event_id", event.ID, "request_id", requestID, "rpc_name", SendUserMessageRPCName, "flow_id", sessionID)
-			return sdkgo.MarkTriggerUndeliverable(err)
-		}
-		return classifyDexRPCError(err)
-	})
+// sessionTarget is the Connector SDK's Dex RPC target bound to one session: it sends the reply to send_user_message.
+// Every delivery attempt of one event, such as a durable inbox replay or a Slack retry, carries the same request ID,
+// sdkgo.TriggerRPCRequestID of the RPC's wire name and the event ID, as the TypeScript harnesses' target sends it, so
+// Dex applies the reply at most once while the session keeps that request ID. send_user_message is transactional,
+// so Dex answers a repeat with the first reply without running the RPC again. The target consumes an event for a
+// closed or never-started session as undeliverable, and returns every other Dex error for a retry.
+func sessionTarget(parts ReviewReplyParts, logger *slog.Logger, isReviewerReply sdkgo.TriggerFilter[slack.MessageEvent], sessionID string) sdkgo.TriggerTarget[slack.MessageEvent] {
+	return sdkgo.NewDexRPCTriggerTarget(parts.Client, parts.SendUserMessage, isReviewerReply,
+		func(sdkgo.TriggerEvent[slack.MessageEvent]) string { return sessionID },
+		func(event sdkgo.TriggerEvent[slack.MessageEvent]) dexagents.AgentUserMessage {
+			return dexagents.AgentUserMessage{Text: ReviewReplyText(event)}
+		},
+		sdkgo.WithTriggerRPCName(dexagents.SendUserMessageRPCName), sdkgo.WithTriggerLogger(logger))
 }
 
 // NewReviewReplyTarget is the target of the reply binding. A reply of a listed reviewer, in the review channel, in a
@@ -159,15 +86,22 @@ func sessionRPCTarget(parts ReviewReplyParts, logger *slog.Logger, sessionID str
 // connector already drops bot messages (any app's, this one's included), edits and other subtypes.
 //
 // The thread decides the session, and Trigger routing is synchronous, so this target looks the thread up first (see
-// ReviewSessions.AccountOfThread) and then hands the event to an RPC target bound to that session. A failed lookup
+// ReviewSessions.AccountOfThread) and then hands the event to a Dex RPC target bound to that session. A failed lookup
 // returns an error and the event stays in the inbox for a retry; an event for a closed session is undeliverable and
-// consumed; a thread two reviews claim is dropped.
+// consumed by the RPC target; a thread two reviews claim is dropped.
 func NewReviewReplyTarget(parts ReviewReplyParts) sdkgo.TriggerTarget[slack.MessageEvent] {
+	return newReviewReplyTarget(parts, nil)
+}
+
+// newReviewReplyTarget is NewReviewReplyTarget, which delivers through deliverTo(sessionID) when it is not nil: a test
+// sees the routing without a Dex server.
+func newReviewReplyTarget(parts ReviewReplyParts, deliverTo func(sessionID string) sdkgo.TriggerTarget[slack.MessageEvent]) sdkgo.TriggerTarget[slack.MessageEvent] {
 	logger := parts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
-	logger = logger.With("target", "rpc")
+	// The RPC target adds target=rpc to its own records; these are the records of the routing in front of it.
+	routingLogger := logger.With("target", "rpc")
 	recentThread := parts.RecentThread
 	if recentThread == 0 {
 		recentThread = 2 * time.Minute
@@ -181,9 +115,14 @@ func NewReviewReplyTarget(parts ReviewReplyParts) sdkgo.TriggerTarget[slack.Mess
 		message := event.Payload
 		return message.ChannelID == parts.Channel.ChannelID && parts.Channel.ReviewerIDs[message.UserID] && message.ThreadTimestamp != "" && message.ThreadTimestamp != message.Timestamp
 	}
+	if deliverTo == nil {
+		deliverTo = func(sessionID string) sdkgo.TriggerTarget[slack.MessageEvent] {
+			return sessionTarget(parts, logger, isReviewerReply, sessionID)
+		}
+	}
 	return sdkgo.TriggerTargetFunc[slack.MessageEvent](func(ctx context.Context, event sdkgo.TriggerEvent[slack.MessageEvent]) error {
 		if !isReviewerReply(event) {
-			logger.InfoContext(ctx, "trigger event skipped: filtered", "event_id", event.ID)
+			routingLogger.InfoContext(ctx, "trigger event skipped: filtered", "event_id", event.ID)
 			return nil
 		}
 		threadTS := event.Payload.ThreadTimestamp
@@ -193,7 +132,7 @@ func NewReviewReplyTarget(parts ReviewReplyParts) sdkgo.TriggerTarget[slack.Mess
 		}
 		if accountID == "" {
 			if parts.Sessions.IsThreadDisputed(threadTS) {
-				logger.WarnContext(ctx, "trigger event skipped: two reviews claim the thread", "event_id", event.ID, "thread_ts", threadTS)
+				routingLogger.WarnContext(ctx, "trigger event skipped: two reviews claim the thread", "event_id", event.ID, "thread_ts", threadTS)
 				return nil
 			}
 			seconds, _ := strconv.ParseInt(strings.Split(threadTS, ".")[0], 10, 64)
@@ -201,10 +140,10 @@ func NewReviewReplyTarget(parts ReviewReplyParts) sdkgo.TriggerTarget[slack.Mess
 				return fmt.Errorf("thread %s is not a known review thread yet", threadTS)
 			}
 			// A warning: it may be a real reply in a review whose post_review result was lost.
-			logger.WarnContext(ctx, "trigger event skipped: not a running review's thread", "event_id", event.ID, "thread_ts", threadTS)
+			routingLogger.WarnContext(ctx, "trigger event skipped: not a running review's thread", "event_id", event.ID, "thread_ts", threadTS)
 			return nil
 		}
-		return sessionRPCTarget(parts, logger, ReviewSessionID(accountID)).HandleTrigger(ctx, event)
+		return deliverTo(ReviewSessionID(accountID)).HandleTrigger(ctx, event)
 	})
 }
 

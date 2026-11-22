@@ -10,11 +10,11 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/superdurable/dex-connectors-library/connectors/google/gmail/go v0.29.1
 	github.com/superdurable/dex-connectors-library/connectors/slack/go v1.8.1
-	github.com/superdurable/dex-connectors-library/sdkgo v0.39.0
+	github.com/superdurable/dex-connectors-library/sdkgo v0.40.0
 	github.com/superdurable/dex/agents/go/core v0.6.16
 	github.com/superdurable/dex/agents/go/eino v0.6.16
 	github.com/superdurable/dex/blob-cache-go v0.1.2
-	github.com/superdurable/dex/sdk-go v1.45.6
+	github.com/superdurable/dex/sdk-go v1.45.16
 	google.golang.org/grpc v1.79.3
 )
 
