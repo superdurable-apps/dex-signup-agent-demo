@@ -106,4 +106,4 @@ require (
 
 // The unreleased Dex modules, from the integrated Dex branch. After the Dex release, replace each line with the
 // released tag in the require block above and delete it here.
-replace github.com/superdurable/dex/agents/go/core => /Users/zz/dex-eino/agents/go/core
+replace github.com/superdurable/dex/agents/go/core => /Users/zz/dex-eino-connectors/agents/go/core

@@ -116,7 +116,7 @@ func TestAToolsRefusalIsARejectedBranchWithItsOwnText(t *testing.T) {
 	harness.stored.messages = []dexagents.AgentMessage{{Sequence: 1, Role: dexagents.MessageRoleTool, ToolName: &name, ToolOutput: &output}}
 	step := singledispatchtest.NewContext("signup-review-acct1", "step-1")
 	attempt := harness.run(t, step, "post_review", reviewArguments)
-	if attempt.Outcome != sdkgo.AgentToolAttemptRejected || attempt.Branch != signup.RefusedBranch || attempt.Failure == nil ||
+	if attempt.Outcome != sdkgo.AgentToolAttemptRejected || attempt.Branch != signup.FailedBranch || attempt.Failure == nil ||
 		attempt.Failure.Message != "refused: the review is already posted (thread 1710000100.000100); use post_draft or reply_in_thread" {
 		t.Fatalf("attempt = %+v %+v", attempt, attempt.Failure)
 	}
@@ -125,7 +125,7 @@ func TestAToolsRefusalIsARejectedBranchWithItsOwnText(t *testing.T) {
 	}
 	// Arguments past the zod limits are refused before anything else.
 	attempt = harness.run(t, step, "reply_in_thread", `{"text":""}`)
-	if attempt.Branch != signup.RefusedBranch || attempt.Failure.Message != "invalid arguments for reply_in_thread: Too small: expected string to have >=1 characters" {
+	if attempt.Branch != signup.FailedBranch || attempt.Failure.Message != "invalid arguments for reply_in_thread: Too small: expected string to have >=1 characters" {
 		t.Fatalf("attempt = %+v %+v", attempt, attempt.Failure)
 	}
 }

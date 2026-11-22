@@ -103,9 +103,13 @@ func ToolResultsSinceLastUserMessage(input []*schema.Message) []SeenResult {
 }
 
 // Generate answers one model call.
-func (scripted *ScriptedChatModel) Generate(_ context.Context, input []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+func (scripted *ScriptedChatModel) Generate(_ context.Context, input []*schema.Message, options ...model.Option) (*schema.Message, error) {
 	scripted.state.mutex.Lock()
 	scripted.state.requests = append(scripted.state.requests, input)
+	// An Eino ChatModelAgent may pass its tools with each call instead of WithTools.
+	for _, tool := range model.GetCommonOptions(&model.Options{}, options...).Tools {
+		scripted.state.offered[tool.Name] = true
+	}
 	scripted.state.mutex.Unlock()
 	step := DecideNextStep(UserTexts(input), ToolResultsSinceLastUserMessage(input))
 	usage := &schema.ResponseMeta{FinishReason: "stop", Usage: &schema.TokenUsage{PromptTokens: 100, CompletionTokens: 10, TotalTokens: 110}}

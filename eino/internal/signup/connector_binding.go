@@ -58,9 +58,11 @@ func RunConnectorAttempt[IN, OUT any](ctx dex.Context, operation sdkgo.Mutation[
 	return ConnectorOutcome{Kind: kind, Branch: result.Branch, Value: value, Failure: result.Failure}, nil
 }
 
-// RefusedBranch is the branch of a tool's own refusal or definite failure: nothing was sent, and the failure's
-// message is the tool's text, such as "refused: call post_review first".
-const RefusedBranch sdkgo.BranchID = "refused"
+// FailedBranch is the branch of a tool's own refusal or definite failure, and the failure's message is the tool's
+// text, such as "refused: call post_review first". It is not named refused: the source's text for it,
+// "<connector> <operation> returned <branch>: ...", must not read as a refusal when the tool's text is another
+// failure, such as send_welcome_email's "send_welcome_email failed and nothing was sent: ...".
+const FailedBranch sdkgo.BranchID = "failed"
 
 // signupMutation is one connector tool as an sdkgo Mutation.
 type signupMutation struct {
@@ -84,7 +86,7 @@ func (mutation signupMutation) failure(kind sdkgo.FailureKind, message string) *
 // Invoke runs one attempt of the tool.
 func (mutation signupMutation) Invoke(call sdkgo.Call, arguments map[string]any) sdkgo.MutationAttempt[json.RawMessage] {
 	if problems := mutation.tool.validate(arguments); len(problems) > 0 {
-		return sdkgo.NewMutationBranch[json.RawMessage](RefusedBranch, nil,
+		return sdkgo.NewMutationBranch[json.RawMessage](FailedBranch, nil,
 			mutation.failure(sdkgo.FailureValidation, fmt.Sprintf("invalid arguments for %s: %s", mutation.tool.name, joinProblems(problems))), sdkgo.Receipt{})
 	}
 	write := func(input any) (ConnectorOutcome, error) { return mutation.write(call.Context, input, call.MaxSends()) }
@@ -94,7 +96,11 @@ func (mutation signupMutation) Invoke(call sdkgo.Call, arguments map[string]any)
 		var unknown *outcomeUnknownError
 		switch {
 		case errors.As(err, &toolError):
-			return sdkgo.NewMutationBranch[json.RawMessage](RefusedBranch, nil, mutation.failure(sdkgo.FailureValidation, toolError.Message), sdkgo.Receipt{})
+			kind := sdkgo.FailureProviderRejection
+			if isRefusalText(toolError.Message) {
+				kind = sdkgo.FailureValidation
+			}
+			return sdkgo.NewMutationBranch[json.RawMessage](FailedBranch, nil, mutation.failure(kind, toolError.Message), sdkgo.Receipt{})
 		case errors.As(err, &unknown):
 			return sdkgo.NewMutationUncertain[json.RawMessage](nil, *mutation.failure(sdkgo.FailureAvailability, unknown.message), sdkgo.Receipt{})
 		default:
@@ -118,6 +124,16 @@ func (mutation signupMutation) Invoke(call sdkgo.Call, arguments map[string]any)
 		return sdkgo.NewMutationBranch[json.RawMessage](sdkgo.DefectBranchID, nil, mutation.failure(sdkgo.FailureLocalDefect, "the result does not encode as JSON"), sdkgo.Receipt{})
 	}
 	return sdkgo.NewMutationBranch(sentBranchOf(mutation.definition), json.RawMessage(value), nil, sdkgo.Receipt{})
+}
+
+// isRefusalText reports a tool's own refusal: nothing was tried.
+func isRefusalText(message string) bool {
+	for _, start := range []string{RefusedPrefix, "not sent: ", "invalid arguments"} {
+		if len(message) >= len(start) && message[:len(start)] == start {
+			return true
+		}
+	}
+	return false
 }
 
 func joinProblems(problems []string) string {
@@ -147,7 +163,7 @@ func toolDefinition(wrapped sdkgo.MutationDefinition, connectorID, operationID s
 	definition := wrapped
 	definition.Operation = sdkgo.OperationRef{ConnectorID: connectorID, OperationID: operationID}
 	definition.Branches = append(append([]sdkgo.BranchDefinition(nil), wrapped.Branches...),
-		sdkgo.BranchDefinition{ID: RefusedBranch, Description: "The tool refused the call or found it failed before anything was sent.", Optional: true})
+		sdkgo.BranchDefinition{ID: FailedBranch, Description: "The tool refused the call, or the call definitely failed.", Optional: true})
 	return definition
 }
 
@@ -161,7 +177,7 @@ func toolMetadata(definition sdkgo.MutationDefinition, description, schema strin
 		Description: description, RepeatOnUnknown: definition.RepeatOnUnknown, MaxSends: definition.MaxSends,
 		BranchOutcomes: map[sdkgo.BranchID]sdkgo.AgentBranchOutcome{
 			"providerRejected": sdkgo.AgentBranchOutcomeRejected, sdkgo.UncertainBranchID: sdkgo.AgentBranchOutcomeUnknown,
-			sdkgo.DefectBranchID: sdkgo.AgentBranchOutcomeUnknown, RefusedBranch: sdkgo.AgentBranchOutcomeRejected,
+			sdkgo.DefectBranchID: sdkgo.AgentBranchOutcomeUnknown, FailedBranch: sdkgo.AgentBranchOutcomeRejected,
 		},
 		InputType: "arguments", InputSchema: json.RawMessage(schema), Branches: definition.Branches, StepDefaults: definition.StepDefaults,
 	}
