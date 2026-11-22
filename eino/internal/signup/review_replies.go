@@ -126,7 +126,8 @@ func isRequestIDUsedForDifferentRequest(err error, requestID string) bool {
 // sessionRPCTarget invokes send_user_message on the resolved session with a request ID derived from the event ID, so
 // a redelivered event (a durable inbox replay, a Slack retry) applies at most once while the session keeps that
 // request ID. It is the Go counterpart of the TypeScript connector SDK's newDexRPCTriggerTarget; sdkgo's Go target
-// sends no request ID (dex-bugs.md, "sdkgo Dex RPC Trigger target sends no request ID").
+// sends no request ID.
+// WORKAROUND(dex-bugs.md#sdkgo-dex-rpc-trigger-target-sends-no-request-id)
 func sessionRPCTarget(parts ReviewReplyParts, logger *slog.Logger, sessionID string) sdkgo.TriggerTarget[slack.MessageEvent] {
 	return sdkgo.TriggerTargetFunc[slack.MessageEvent](func(ctx context.Context, event sdkgo.TriggerEvent[slack.MessageEvent]) error {
 		if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(event.ID) == "" {

@@ -11,6 +11,7 @@ package signup
 // running call of the same operation in one Step attempt, so the wrapping Mutation has its own operation identity:
 // the connector's ID and the tool's name, such as slack postReview. The wrapped call keeps the connector operation's
 // identity, so its Call ID, idempotency key and fence are exactly those of a plain connector tool call.
+// WORKAROUND(dex-bugs.md#a-custom-go-connector-tool-cannot-read-the-attempt-of-the-operation-it-wraps)
 
 import (
 	"encoding/json"
