@@ -1,7 +1,7 @@
 # Design and behaviour
 
 How the review agent works: its prompt and tools, what each tool writes, how sends and replies are kept from
-happening twice, how replies reach a session, the two harnesses, and the known limits. For the overview, see the
+happening twice, how replies reach a session, the three harnesses, and the known limits. For the overview, see the
 [README](../README.md); for settings and commands, [reference.md](reference.md).
 
 ## The prompt
@@ -300,11 +300,12 @@ Where they run ([`src/main.ts`](../src/main.ts), [`src/application.ts`](../src/a
 `npm start` runs one process with the Dex Worker, the watcher and the reply Trigger. Hosted, `node . worker` runs the
 Worker and the watcher, and `node . web` runs the reply Trigger behind the HTTP server.
 
-## The two harnesses
+## The three harnesses
 
-The same prompt, tools, tool policies and reply Trigger run on two agent harnesses. `SIGNUP_AGENT_HARNESS` picks
-one (`pi` by default, or `claude-agent-sdk`), and the review post names it. Each file is the whole harness
-(simplified here):
+The same prompt, tools, tool policies and reply Trigger run on three agent harnesses, and the review post names the
+one that wrote it. `npm start` runs pi (`SIGNUP_AGENT_HARNESS=pi`, the default) or the Claude Agent SDK
+(`claude-agent-sdk`); `make run-eino` runs the Eino harness, a Go process in [`eino/`](../eino). Each file is the whole
+harness (simplified here):
 
 <table>
 <tr><th><a href="../src/pi-agent.ts">pi</a></th><th><a href="../src/claude-agent.ts">Claude Agent SDK</a></th></tr>
@@ -360,8 +361,64 @@ Claude Code login (<code>SIGNUP_AGENT_CLAUDE_AUTH=login</code>), or <code>ANTHRO
 <code>api-key</code>.</td></tr>
 </table>
 
+### The Eino harness
+
+[`eino/internal/signup/eino_agent.go`](../eino/internal/signup/eino_agent.go) (simplified):
+
+```go
+dexeino.NewAgentSessionFlow(&adk.ChatModelAgentConfig{
+	Name:          "signup-review",
+	Instruction:   SignupAgentPrompt, // an embedded copy of signupAgentPrompt
+	Model:         chatModel,         // eino-ext openai or claude, from SIGNUP_AGENT_EINO_*
+	ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools}},
+	MaxIterations: 100, // model calls per turn, pi's limit; Eino's default is 20
+}, "SignupReviewEinoAgentFlow",
+	dexeino.WithToolPolicies(policies),       // the plain tools' effects; no tool asks for approval
+	dexeino.WithToolSources(connectorSource)) // the six connector tools, connectortools.NewConnectorToolSource
+```
+
+The Dex Eino adapter runs the ADK agent in Step mode: every model call is one `RunModel` Step, and every tool call
+its own tool Step, as with pi. A `RunModel` makes exactly one model call over the session's stored messages, and the
+tool calls it returns run in their Steps. fetch_profile, github_user and finish_review are Eino tools; the six
+connector tools come from the Go connector tool source over the Slack and Gmail Go connectors
+(`connectors/slack/go` 1.8.1, `connectors/google/gmail/go` 0.29.1). A crash repeats at most the one call that was
+running.
+
+The Go port keeps the TypeScript behaviour, texts and limits; `eino/internal/signup` holds it file by file. What
+differs:
+
+- Go's connector SDK does not let a tool read the attempt of the operation it calls, so each connector tool is an
+  application operation (such as `slack postReview`) that runs the wrapped Slack or Gmail operation through
+  `sdkgo.RunMutation`. The wrapped call keeps the connector's own call identity, idempotency key and fence. A
+  tool's refusal reaches the model inside the connector source's text, such as
+  `slack replyInThread returned failed: VALIDATION: refused: call post_review first`.
+- The Go connector SDK's Dex RPC target (sdkgo 0.39.0) sends no request ID, so the reply target sends each event to
+  its session with the request ID the TypeScript connector SDK derives from the event ID.
+- Each connector tool lists the connector's `defect` branch as an unknown outcome, as Dex Agents 0.6.14, which the
+  TypeScript harnesses pin, records it; the Go connector tool source otherwise classifies by the branch's listing.
+- A tool's refusal or definite failure on a retried attempt of its tool Step is recorded `outcome_unknown` when an
+  earlier attempt may have sent. Otherwise a check that fails on the retry, such as a ReviewAPI read while it is
+  busy, would tell the model that nothing was sent, and a new call could post the review or send the email again.
+  The Go connector tool source leaves this to the tool, so each tool reads the Step's checkpoint by the rule of
+  sdkgo's fence. When the checkpoint holds a claim or a send of the call, Dex Agents 0.6.14 records the same. When
+  a retried attempt finds no checkpoint, the Go harness is stricter than the TypeScript harnesses: Dex stores
+  checkpoints batched and lossy, so attempt 1 may have sent and lost its claim, and the fence assumes each earlier
+  attempt sent once. Dex Agents 0.6.14 records that refusal failed.
+- The Go Gmail connector 0.29.1 reads Sent Mail back by the `X-Dex-Message-ID` header that every attempt of a send
+  repeats, not by Message-ID: Gmail replaces the Message-ID of the Sent copy with its own, so a search for the
+  client's value never finds the send (superdurable/dex-connectors-library#1061). It lists recent Sent Mail to the
+  recipient and reads each candidate's headers. The TypeScript harnesses read back the same way since
+  `@superdurable/connector-google-gmail` 0.5.1.
+- The Go Gmail connector selects `uncertain` once the third send's outcome stays unknown; either way Dex records
+  `outcome_unknown`. The Go fence keeps one marker per call ID in a Step's checkpoint; the app still makes one fenced
+  write per Step.
+- The model is an endpoint of either protocol; there is no model catalog (see
+  [Eino model selection](reference.md#eino-model-selection)).
+
 Each harness has its own session Flow type, and the Worker runs one of them: finish the open reviews before
-switching, or switch back to let them finish. Only the pi harness runs on Dex Cloud.
+switching, or switch back to let them finish. Only the pi harness runs on Dex Cloud; the Claude Agent SDK and Eino
+harnesses run only locally. The Eino process has no web or worker mode, no committed session graph, and reads
+`.env` and `connections.json` as the local Node process does.
 
 ## Ending a review
 
