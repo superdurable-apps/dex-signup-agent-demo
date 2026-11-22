@@ -11,7 +11,9 @@ require (
 	github.com/superdurable/dex-connectors-library/connectors/google/gmail/go v0.29.0
 	github.com/superdurable/dex-connectors-library/connectors/slack/go v1.8.1
 	github.com/superdurable/dex-connectors-library/sdkgo v0.39.0
-	github.com/superdurable/dex/agents/go/core v0.0.0-00010101000000-000000000000
+	github.com/superdurable/dex/agents/go/core v0.6.16
+	github.com/superdurable/dex/agents/go/eino v0.6.16
+	github.com/superdurable/dex/blob-cache-go v0.1.2
 	github.com/superdurable/dex/sdk-go v1.45.6
 	google.golang.org/grpc v1.79.3
 )
@@ -73,7 +75,6 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/slongfield/pyfmt v0.0.0-20220222012616-ea85ff4c361f // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
-	github.com/superdurable/dex/blob-cache-go v0.1.2 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
@@ -106,4 +107,6 @@ require (
 
 // The unreleased Dex modules, from the integrated Dex branch. After the Dex release, replace each line with the
 // released tag in the require block above and delete it here.
-replace github.com/superdurable/dex/agents/go/core => /Users/zz/dex-eino-connectors/agents/go/core
+replace github.com/superdurable/dex/agents/go/core => /Users/zz/dex-eino/agents/go/core
+
+replace github.com/superdurable/dex/agents/go/eino => /Users/zz/dex-eino/agents/go/eino
