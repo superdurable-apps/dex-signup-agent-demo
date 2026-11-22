@@ -252,8 +252,8 @@ github.com/superdurable/dex-connectors-library/connectors/google/gmail/go v0.29.
 github.com/superdurable/dex-connectors-library/connectors/google/gmail/go v0.29.1/go.mod h1:uTeTfOuQmB3HcWNB+Q+ISFBJZdQOia3HWWk0hO1Hwd8=
 github.com/superdurable/dex-connectors-library/connectors/slack/go v1.8.1 h1:7lVXIwro7FzWVfVXkxkN7/4ALhPIPGetFJGYCBVhgHY=
 github.com/superdurable/dex-connectors-library/connectors/slack/go v1.8.1/go.mod h1:EApz8bjav63IQZgHjotaj0u/jNpZ3yQrpWyT116yslI=
-github.com/superdurable/dex-connectors-library/sdkgo v0.40.0 h1:q/7Y9mQZLEhiS0NTj+/vNdvYeRAlJFA5EyU4N2ngAnY=
-github.com/superdurable/dex-connectors-library/sdkgo v0.40.0/go.mod h1:I6tcjkgGTfzzR1GsXCtZf0Xnam0Pra7FNcO72W1wlME=
+github.com/superdurable/dex-connectors-library/sdkgo v0.41.0 h1:BppCtrveeuAWy43Gtrwc1RF3NOYeVX8/SthkgWbmMuE=
+github.com/superdurable/dex-connectors-library/sdkgo v0.41.0/go.mod h1:I6tcjkgGTfzzR1GsXCtZf0Xnam0Pra7FNcO72W1wlME=
 github.com/superdurable/dex/agents/go/core v0.6.16 h1:h0y1OUfPeEoPtGPuDD29S1Rvh4cg8HMU7V0MZJWXcOI=
 github.com/superdurable/dex/agents/go/core v0.6.16/go.mod h1:1W4QlaTW0QU+HnPDXg9W/cDa4vClr+3nnS/uS8T7yL8=
 github.com/superdurable/dex/agents/go/eino v0.6.16 h1:erP+adwd4M1czyO39FQ9BKQ+InxKuCmj0aPoLQi+lFs=
