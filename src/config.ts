@@ -4,6 +4,20 @@
 import { getBuiltinModels, getBuiltinProviders, type BuiltinProvider } from "@earendil-works/pi-ai/providers/all";
 
 import type { ReviewChannel } from "./review-replies.ts";
+import type { OnboardingModelSelection } from "./vercel-ai-agent.ts";
+
+/** The onboarding wizard's settings (docs/onboarding.md); present only with ONBOARDING_ENABLED=true. */
+export interface OnboardingConfig {
+  readonly usageApiUrl: string;
+  readonly usageApiKey: string;
+  /** Only accounts approved at or after this time are onboarded. */
+  readonly onboardSince: Date;
+  readonly model: OnboardingModelSelection;
+  readonly watchIntervalMs: number;
+  readonly maxNudges: number;
+  readonly minNudgeGapDays: number;
+  readonly windowDays: number;
+}
 
 export interface SignupAgentConfig {
   readonly reviewApiUrl: string;
@@ -25,6 +39,53 @@ export interface SignupAgentConfig {
   readonly workerSlots: number;
   /** The local blob cache; a hosted process uses DEX_BLOB_CACHE_DIR/<mode>. */
   readonly blobCacheDirectory: string;
+  /** The onboarding wizard, or undefined when it is off. */
+  readonly onboarding: OnboardingConfig | undefined;
+}
+
+/**
+ * ONBOARDING_ENABLED=true turns the onboarding wizard on. Its usage API defaults to the review API's URL and key; the
+ * model is ONBOARDING_AGENT_MODEL of Anthropic with ANTHROPIC_API_KEY (claude-opus-5-5 by default), or, with
+ * ONBOARDING_AGENT_BASE_URL, the model ID of an OpenAI-compatible endpoint with ONBOARDING_AGENT_API_KEY.
+ */
+function onboardingConfig(optional: (name: string) => string | undefined, required: (name: string) => string): OnboardingConfig | undefined {
+  const enabled = optional("ONBOARDING_ENABLED") ?? "false";
+  if (enabled !== "true" && enabled !== "false") {
+    throw new Error("ONBOARDING_ENABLED must be true or false");
+  }
+  if (enabled === "false") {
+    return undefined;
+  }
+  const since = optional("ONBOARDING_SINCE") ?? required("ONBOARDING_SINCE");
+  const onboardSince = new Date(since);
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(since) || Number.isNaN(onboardSince.getTime())) {
+    throw new Error(`ONBOARDING_SINCE must be an RFC 3339 time, such as ${new Date().toISOString()}`);
+  }
+  const baseUrl = optional("ONBOARDING_AGENT_BASE_URL");
+  const modelId = optional("ONBOARDING_AGENT_MODEL");
+  let model: OnboardingModelSelection;
+  if (baseUrl !== undefined) {
+    if (modelId === undefined) {
+      throw new Error("ONBOARDING_AGENT_MODEL is required with ONBOARDING_AGENT_BASE_URL: set it to the endpoint's model ID");
+    }
+    if (!/^https?:\/\/[^/?#]+/.test(baseUrl) || /[?#]/.test(baseUrl)) {
+      throw new Error("ONBOARDING_AGENT_BASE_URL must be an http(s) base URL without a query, such as https://llm.example.com/v1");
+    }
+    model = { kind: "openai-compatible", modelId, baseUrl, apiKey: required("ONBOARDING_AGENT_API_KEY") };
+  } else {
+    model = { kind: "anthropic", modelId: modelId ?? "claude-opus-5-5", apiKey: required("ANTHROPIC_API_KEY") };
+  }
+  const days = (name: string, fallback: string) => positiveInteger(optional(name) ?? fallback, name, "days");
+  return {
+    usageApiUrl: optional("ONBOARDING_USAGE_API_URL") ?? required("REVIEW_API_URL"),
+    usageApiKey: optional("ONBOARDING_USAGE_API_KEY") ?? required("REVIEW_API_KEY"),
+    onboardSince,
+    model,
+    watchIntervalMs: positiveInteger(optional("ONBOARDING_WATCH_INTERVAL_SECONDS") ?? "60", "ONBOARDING_WATCH_INTERVAL_SECONDS") * 1_000,
+    maxNudges: positiveInteger(optional("ONBOARDING_MAX_NUDGES") ?? "3", "ONBOARDING_MAX_NUDGES", "nudges"),
+    minNudgeGapDays: days("ONBOARDING_MIN_NUDGE_GAP_DAYS", "3"),
+    windowDays: days("ONBOARDING_WINDOW_DAYS", "30"),
+  };
 }
 
 /**
@@ -197,5 +258,6 @@ export function loadSignupAgentConfig(environment: NodeJS.ProcessEnv = process.e
     watchIntervalMs: positiveInteger(optional("SIGNUP_WATCH_INTERVAL_SECONDS") ?? "30", "SIGNUP_WATCH_INTERVAL_SECONDS") * 1_000,
     workerSlots: positiveInteger(optional("SIGNUP_WORKER_SLOTS") ?? "64", "SIGNUP_WORKER_SLOTS", "slots"),
     blobCacheDirectory: optional("DEX_BLOB_CACHE_DIR") ?? ".dex-blob-cache",
+    onboarding: onboardingConfig(optional, required),
   };
 }

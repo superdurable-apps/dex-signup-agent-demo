@@ -65,6 +65,11 @@ export interface ReviewReplyParts {
   readonly channel: ReviewChannel;
   readonly logger?: TriggerLogger;
   /**
+   * The onboarding sessions, whose threads are in the same channel: a reply in a thread no running review posted goes
+   * to the running onboarding that posted it. Absent when the onboarding agent is off.
+   */
+  readonly onboarding?: { readonly sessionFlow: ReviewSessionFlow; readonly sessions: ReviewSessions; readonly sessionIdOf: (accountId: string) => string };
+  /**
    * A reply in an unknown thread whose root is younger than this is retried rather than dropped: its review post may
    * have gone out before post_review's result was stored. 2 minutes by default.
    */
@@ -89,8 +94,8 @@ export function createReviewReplyTarget(parts: ReviewReplyParts): TriggerTarget<
     const message = event.payload;
     return message.channelId === parts.channel.channelId && parts.channel.reviewerIds.has(message.userId) && message.threadTimestamp !== "" && message.threadTimestamp !== message.timestamp;
   };
-  const deliverTo = (sessionId: string) =>
-    newDexRPCTriggerTarget(parts.client, parts.sessionFlow.sendUserMessage, isReviewerReply, () => sessionId, (event) => ({ text: reviewReplyText(event) }), { logger });
+  const deliverTo = (sessionId: string, sessionFlow: ReviewSessionFlow = parts.sessionFlow) =>
+    newDexRPCTriggerTarget(parts.client, sessionFlow.sendUserMessage, isReviewerReply, () => sessionId, (event) => ({ text: reviewReplyText(event) }), { logger });
   return {
     async handleTrigger(context, event) {
       if (!isReviewerReply(event)) {
@@ -98,9 +103,17 @@ export function createReviewReplyTarget(parts: ReviewReplyParts): TriggerTarget<
         return deliverTo("").handleTrigger(context, event);
       }
       const threadTs = event.payload.threadTimestamp;
-      const accountId = await parts.sessions.accountOfThread(threadTs, Date.now());
+      const lookupSince = Date.now();
+      const accountId = await parts.sessions.accountOfThread(threadTs, lookupSince);
+      const onboarding = parts.onboarding;
+      if (accountId === undefined && onboarding !== undefined && !parts.sessions.isThreadDisputed(threadTs)) {
+        const onboardedAccount = await onboarding.sessions.accountOfThread(threadTs, lookupSince);
+        if (onboardedAccount !== undefined) {
+          return deliverTo(onboarding.sessionIdOf(onboardedAccount), onboarding.sessionFlow).handleTrigger(context, event);
+        }
+      }
       if (accountId === undefined) {
-        if (parts.sessions.isThreadDisputed(threadTs)) {
+        if (parts.sessions.isThreadDisputed(threadTs) || onboarding?.sessions.isThreadDisputed(threadTs) === true) {
           logTriggerRecord(logger, context, "warn", "trigger event skipped: two reviews claim the thread", { event_id: event.id, thread_ts: threadTs });
           return;
         }

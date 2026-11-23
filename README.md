@@ -25,6 +25,15 @@ The application is the agent's **prompt and tools**. One Dex agent session per s
 first lookup to the sent email. Dex keeps it durable, so a crash, a deploy or a week of waiting for an admin loses
 nothing and repeats nothing.
 
+## Onboarding wizard
+
+With `ONBOARDING_ENABLED=true`, a second agent takes over each account the review approves. It is a
+[Vercel AI SDK](https://ai-sdk.dev) agent on the Dex Vercel AI adapter, one session `onboarding-<accountId>` per
+account. It tracks the account's usage at check-ins it schedules itself, posts a report with the key metrics and its
+insights in one Slack thread per account, and, when usage stalls, drafts a personal follow-up email for an admin to
+`send`. Dex Cloud does not serve the usage operations yet, so locally they come from a stand-in (`npm run
+usage-standin`). See [docs/onboarding.md](docs/onboarding.md) and the proposed [usage operations](docs/usage-api.md).
+
 ## Architecture
 
 ```text

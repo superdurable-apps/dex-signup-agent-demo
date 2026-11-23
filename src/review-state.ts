@@ -97,6 +97,20 @@ const isMissing = (error: unknown) => error instanceof FlowNotFoundError || erro
  */
 export class ReviewSessions {
   private connected: { client: Client; sessionFlow: ReviewSessionFlow } | undefined;
+  /** The FlowID of an account's session and the account of a FlowID; the onboarding sessions pass their own. */
+  protected readonly sessionIdOf: (accountId: string) => string;
+  protected readonly accountOf: (sessionId: string) => string;
+  /** What a turn note may add to this session type's tool records. */
+  protected readonly noteKinds: NoteToolKinds;
+  /** For log lines, such as `review`. */
+  private readonly noun: string;
+
+  public constructor(ids: { sessionIdOf: (accountId: string) => string; accountOf: (sessionId: string) => string; noteKinds: NoteToolKinds; noun: string } = { sessionIdOf: reviewSessionId, accountOf: accountIdOf, noteKinds: signupNoteToolKinds, noun: "review" }) {
+    this.sessionIdOf = ids.sessionIdOf;
+    this.accountOf = ids.accountOf;
+    this.noteKinds = ids.noteKinds;
+    this.noun = ids.noun;
+  }
   /** Review thread timestamp to account, for this process. A review's thread never changes once posted. */
   private readonly threads = new Map<string, string>();
   /** Threads two accounts claimed: they belong to neither. */
@@ -108,7 +122,7 @@ export class ReviewSessions {
     this.connected = { client, sessionFlow };
   }
 
-  private get dex() {
+  protected get dex() {
     if (this.connected === undefined) {
       throw new Error("ReviewSessions is not connected yet");
     }
@@ -133,7 +147,7 @@ export class ReviewSessions {
     if (known !== undefined && known !== accountId) {
       this.threads.delete(threadTs);
       this.disputedThreads.add(threadTs);
-      console.warn(`review threads: thread ${threadTs} is claimed by the reviews of ${known} and ${accountId}; its replies reach neither`);
+      console.warn(`${this.noun} threads: thread ${threadTs} is claimed by the ${this.noun}s of ${known} and ${accountId}; its replies reach neither`);
       return;
     }
     this.threads.set(threadTs, accountId);
@@ -187,6 +201,11 @@ export class ReviewSessions {
     }
   }
 
+  /** The session's thread as its own records hold it; the onboarding sessions read their report's. */
+  protected async threadOfSession(accountId: string): Promise<ReviewThread | undefined> {
+    return (await this.review(accountId)).thread;
+  }
+
   /** Reads the thread of each running review not indexed yet. */
   private async indexRunningReviews(): Promise<void> {
     const { client, sessionFlow } = this.dex;
@@ -195,9 +214,9 @@ export class ReviewSessions {
     do {
       const page = await client.searchFlows(query, 100, pageToken);
       for (const entry of page.flows) {
-        const accountId = accountIdOf(entry.flowId);
-        if (entry.flowId === reviewSessionId(accountId) && !this.indexedAccounts.has(accountId)) {
-          const { thread } = await this.review(accountId);
+        const accountId = this.accountOf(entry.flowId);
+        if (entry.flowId === this.sessionIdOf(accountId) && !this.indexedAccounts.has(accountId)) {
+          const thread = await this.threadOfSession(accountId);
           if (thread !== undefined) {
             this.rememberThread(thread.ts, accountId);
           }
@@ -215,7 +234,7 @@ export class ReviewSessions {
    * and every Worker of the session Flow type on dex-agents 0.6.14 or newer.
    */
   public async endSession(accountId: string): Promise<void> {
-    await this.dex.client.stopFlow(reviewSessionId(accountId), { type: StopType.GRACEFUL_COMPLETE }).catch((error: unknown) => {
+    await this.dex.client.stopFlow(this.sessionIdOf(accountId), { type: StopType.GRACEFUL_COMPLETE }).catch((error: unknown) => {
       if (!isMissing(error)) {
         throw error;
       }
@@ -223,7 +242,7 @@ export class ReviewSessions {
   }
 
   public snapshot(accountId: string): Promise<AgentSnapshot> {
-    return readAgentSnapshot(this.dex.client, this.dex.sessionFlow, reviewSessionId(accountId));
+    return readAgentSnapshot(this.dex.client, this.dex.sessionFlow, this.sessionIdOf(accountId));
   }
 
   /**
@@ -233,7 +252,7 @@ export class ReviewSessions {
    */
   public async history(accountId: string): Promise<{ snapshot: AgentSnapshot; messages: AgentMessage[]; isComplete: boolean }> {
     const { client, sessionFlow } = this.dex;
-    const sessionId = reviewSessionId(accountId);
+    const sessionId = this.sessionIdOf(accountId);
     const snapshot = await readAgentSnapshot(client, sessionFlow, sessionId);
     let messages: AgentMessage[] = [...snapshot.messages];
     for (let page = 0; page < 50 && (messages[0]?.sequence ?? 1) > 1; page++) {
@@ -252,7 +271,7 @@ export class ReviewSessions {
    */
   public async toolRecords(accountId: string): Promise<ToolHistory> {
     const { snapshot, messages, isComplete } = await this.history(accountId);
-    return { records: toolRecordsOf(messages, snapshot.toolCalls), isComplete };
+    return { records: toolRecordsOf(messages, snapshot.toolCalls, this.noteKinds), isComplete };
   }
 }
 
@@ -303,8 +322,10 @@ export function outcomeOfResult(tool: string, output: string): ToolRecord["outco
   if (definiteFailureStarts.some((start) => output.startsWith(start))) {
     return "failed";
   }
-  return tool === "send_welcome_email" ? "unknown" : "failed";
+  return uncertainOnTextTools.has(tool) ? "unknown" : "failed";
 }
+/** The send tools whose result text that is neither success nor a definite failure counts as a possible send. */
+const uncertainOnTextTools = new Set(["send_welcome_email", "send_nudge"]);
 const outcomeOfStatus = (status: string): ToolRecord["outcome"] => (status === "succeeded" ? "succeeded" : status === "outcome_unknown" ? "unknown" : "failed");
 /** The turn notes the session writes itself, one entry per tool call: `- <tool> <arguments> -> <status>: <outcome>`. */
 const noteOrigins = new Set(["turn_failure_note", "turn_steered_note", "turn_cancelled_note"]);
@@ -404,12 +425,12 @@ const sendTool = "send_welcome_email";
  * a send entry that does not, as unknown; and any other mention of the send tool, such as one inside another call's
  * arguments or outcome text, as unknown too. Only a send's own header and outcome text explain a mention.
  */
-export function noteSendEvidence(text: string): ToolRecord["outcome"][] {
+export function noteSendEvidence(text: string, sendToolName: string = sendTool): ToolRecord["outcome"][] {
   const entries = noteEntries(text);
-  const sends = entries.filter((entry) => entry.tool === sendTool);
+  const sends = entries.filter((entry) => entry.tool === sendToolName);
   const evidence = sends.map((entry) => (entry.status === undefined ? "unknown" : outcomeOfStatus(entry.status)));
   const isExplained = (at: number) => sends.some((entry) => (at > entry.start && at < entry.outputStart) || (entry.status !== undefined && at >= entry.outputStart && at < entry.end));
-  for (let at = text.indexOf(sendTool); at >= 0; at = text.indexOf(sendTool, at + 1)) {
+  for (let at = text.indexOf(sendToolName); at >= 0; at = text.indexOf(sendToolName, at + 1)) {
     if (!isExplained(at)) {
       evidence.push("unknown");
       break;
@@ -423,7 +444,7 @@ export function noteSendEvidence(text: string): ToolRecord["outcome"][] {
  * listed only there), and the finished calls of the running turn. Text the model or a user wrote never counts: a
  * note counts only with the origin the session sets.
  */
-export function toolRecordsOf(messages: readonly AgentMessage[], activeToolCalls: readonly AgentToolCallRecord[]): ToolRecord[] {
+export function toolRecordsOf(messages: readonly AgentMessage[], activeToolCalls: readonly AgentToolCallRecord[], kinds: NoteToolKinds = signupNoteToolKinds): ToolRecord[] {
   const records: ToolRecord[] = [];
   for (const message of messages) {
     if (message.role === "tool" && message.toolName) {
@@ -437,17 +458,17 @@ export function toolRecordsOf(messages: readonly AgentMessage[], activeToolCalls
       // so it can at most skip a request the account no longer needs; and a post_review entry, as a review that may
       // have been posted, whatever its status, which only blocks another post. Never a draft post or a thread: those
       // steer the tools.
-      for (const outcome of noteSendEvidence(text)) {
-        records.push({ tool: sendTool, outcome, output: "", position: message.sequence, source: "note" });
+      for (const outcome of noteSendEvidence(text, kinds.sendTool)) {
+        records.push({ tool: kinds.sendTool, outcome, output: "", position: message.sequence, source: "note" });
       }
       const entries = noteEntries(text);
       for (const entry of entries) {
-        if ((entry.tool === "approve_account" || entry.tool === "reject_account") && entry.status !== undefined) {
+        if (kinds.decisionTools.includes(entry.tool) && entry.status !== undefined) {
           records.push({ tool: entry.tool, outcome: outcomeOfStatus(entry.status), output: entry.output, position: message.sequence, source: "note" });
         }
       }
-      if (entries.some((entry) => entry.tool === "post_review")) {
-        records.push({ tool: "post_review", outcome: "unknown", output: "", position: message.sequence, source: "note" });
+      if (entries.some((entry) => entry.tool === kinds.postOnceTool)) {
+        records.push({ tool: kinds.postOnceTool, outcome: "unknown", output: "", position: message.sequence, source: "note" });
       }
     }
   }
@@ -459,6 +480,17 @@ export function toolRecordsOf(messages: readonly AgentMessage[], activeToolCalls
   }
   return records;
 }
+
+/**
+ * What a turn note may add to the records of a session's tools: evidence of `sendTool`'s sends, the outcomes of the
+ * `decisionTools`, and a possible post of `postOnceTool`. Each only fails closed, as {@link toolRecordsOf} describes.
+ */
+export interface NoteToolKinds {
+  readonly sendTool: string;
+  readonly decisionTools: readonly string[];
+  readonly postOnceTool: string;
+}
+export const signupNoteToolKinds: NoteToolKinds = { sendTool, decisionTools: ["approve_account", "reject_account"], postOnceTool: "post_review" };
 
 /** The session's tool records, and whether they come from its whole history. */
 export interface ToolHistory {

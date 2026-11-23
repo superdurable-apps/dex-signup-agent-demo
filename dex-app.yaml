@@ -42,6 +42,30 @@ application:
     - name: SIGNUP_WATCH_INTERVAL_SECONDS
     - name: GITHUB_TOKEN
       secret: true
+    # The onboarding wizard (docs/onboarding.md): off unless "true".
+    - name: ONBOARDING_ENABLED
+      enum: ["true", "false"]
+    # An RFC 3339 time: only accounts approved since then are onboarded.
+    - name: ONBOARDING_SINCE
+      minLength: 20
+    # The usage operations; they default to REVIEW_API_URL and REVIEW_API_KEY.
+    - name: ONBOARDING_USAGE_API_URL
+      minLength: 1
+    - name: ONBOARDING_USAGE_API_KEY
+      secret: true
+      minLength: 1
+    # An Anthropic model ID (claude-opus-5-5 by default, with ANTHROPIC_API_KEY), or an endpoint's model ID.
+    - name: ONBOARDING_AGENT_MODEL
+      minLength: 1
+    - name: ONBOARDING_AGENT_BASE_URL
+      minLength: 1
+    - name: ONBOARDING_AGENT_API_KEY
+      secret: true
+      minLength: 1
+    - name: ONBOARDING_WATCH_INTERVAL_SECONDS
+    - name: ONBOARDING_MAX_NUDGES
+    - name: ONBOARDING_MIN_NUDGE_GAP_DAYS
+    - name: ONBOARDING_WINDOW_DAYS
   # The model settings: one group must be complete, so a publish without them is blocked in Setup instead of
   # the application crashing at start. The code takes the endpoint group when SIGNUP_AGENT_PI_BASE_URL is set,
   # else the Anthropic key (src/config.ts piModelSelection).
@@ -53,6 +77,8 @@ application:
 # The committed pi session graph; make session-graphs writes it.
 flowDefinitions:
   - sourcePath: flow-definitions/signup-review-pi-agent.json
+  # The onboarding wizard's session graph; it runs only with ONBOARDING_ENABLED=true.
+  - sourcePath: flow-definitions/onboarding-vercel-ai-agent.json
 # Each package and version must equal the one package.json pins.
 connectors:
   - connectionName: review-slack
