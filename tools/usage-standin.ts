@@ -44,7 +44,8 @@ const emptyCounts: AccountUsage["counts"] = {
   previewStarts7d: 0,
   previewFailures7d: 0,
   publishes28d: 0,
-  triggerEvents7d: 0,
+  // The server keeps Trigger events only briefly, so it cannot count 7 days: null, as it answers.
+  triggerEvents7d: null,
 };
 
 /** "now", "-3d", "-6h", "-30m", or an RFC 3339 time, as an RFC 3339 time; anything else unchanged. */

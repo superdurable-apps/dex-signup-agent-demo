@@ -21,7 +21,8 @@ const stageMilestones: readonly [OnboardingStage, (keyof Milestones)[]][] = [
  * - `not_started`: never signed in, `notStartedAfterDays` or more after the approval.
  * - `blocked`: Preview starts keep failing (2 or more in 7 days) and no Preview was ever ready.
  * - `stalled`: not live, and no activity for `stalledAfterDays` or more.
- * - `live_idle`: live, but neither activity nor Trigger events in 7 days.
+ * - `live_idle`: live, but neither activity nor Trigger events in 7 days. While the server cannot count Trigger events
+ *   (null), a Live application that runs only on Triggers, with nobody signing in, also reads as idle.
  * - `graduated`: live for `graduatedAfterDays` or more, with activity or Trigger events in the last 7 days.
  * - `progressing`: anything else.
  */
@@ -69,7 +70,7 @@ export function assessUsage(usage: AccountUsage, rules: StallRules = defaultStal
   const stageNumber = onboardingStages.indexOf(stage) + 1;
   const daysSinceApproval = daysBetween(usage.approvedAt, now);
   const daysSinceActivity = daysBetween(usage.lastActivityAt, now);
-  const recentlyActive = (daysSinceActivity ?? Number.POSITIVE_INFINITY) < 7 || usage.counts.triggerEvents7d > 0;
+  const recentlyActive = (daysSinceActivity ?? Number.POSITIVE_INFINITY) < 7 || (usage.counts.triggerEvents7d ?? 0) > 0;
   const failure = usage.projects.find((project) => project.lastPreviewFailure !== null)?.lastPreviewFailure ?? null;
   let signal: UsageSignal = "progressing";
   if (stage === "live") {
@@ -77,7 +78,7 @@ export function assessUsage(usage: AccountUsage, rules: StallRules = defaultStal
     signal = !recentlyActive ? "live_idle" : daysLive >= rules.graduatedAfterDays ? "graduated" : "progressing";
   } else if (usage.milestones.firstSignInAt === null && (daysSinceApproval ?? 0) >= rules.notStartedAfterDays) {
     signal = "not_started";
-  } else if (usage.milestones.firstPreviewReadyAt === null && usage.counts.previewFailures7d >= 2) {
+  } else if (usage.milestones.firstPreviewReadyAt === null && (usage.counts.previewFailures7d ?? 0) >= 2) {
     signal = "blocked";
   } else if (usage.milestones.firstSignInAt !== null && (daysSinceActivity ?? Number.POSITIVE_INFINITY) >= rules.stalledAfterDays) {
     signal = "stalled";

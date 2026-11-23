@@ -21,6 +21,8 @@ const MilestonesSchema = z.object({
 export type Milestones = z.infer<typeof MilestonesSchema>;
 
 const count = z.number().int().nonnegative();
+/** A count the server cannot always give exactly, such as one over a window it keeps only partly: null then. */
+const partialCount = count.nullish().transform((value) => value ?? null);
 const CountsSchema = z.object({
   teamSpaces: count,
   projects: count,
@@ -28,13 +30,13 @@ const CountsSchema = z.object({
   connections: count,
   members: count,
   /** The account's messages to the Studio agent in the last 7 and 28 days. */
-  agentMessages7d: count,
-  agentMessages28d: count,
-  previewStarts7d: count,
-  previewFailures7d: count,
+  agentMessages7d: partialCount,
+  agentMessages28d: partialCount,
+  previewStarts7d: partialCount,
+  previewFailures7d: partialCount,
   publishes28d: count,
   /** Trigger events the account's Live applications received in the last 7 days. */
-  triggerEvents7d: count,
+  triggerEvents7d: partialCount,
 });
 export type UsageCounts = z.infer<typeof CountsSchema>;
 
@@ -77,7 +79,7 @@ const ActiveAccountSchema = z.object({
 });
 export type ActiveAccount = z.infer<typeof ActiveAccountSchema>;
 
-/** A failed usage call; `not_found` for an account the server does not know. */
+/** A failed usage call: `not_found` for an account the server does not know, `failed_precondition` for one never approved. */
 export class UsageApiError extends Error {
   public readonly code: string;
   public readonly httpStatus: number;

@@ -80,3 +80,16 @@ test("the record reads sends, unknown sends and check-ins only from structured r
   assert.equal(nudgeSendOf(history, 2), "unknown");
   assert.equal(nudgeSendOf({ isComplete: false, records: [] }, 3), "unknown");
 });
+
+test("counts the server cannot give are null: shown as n/a and never a signal by themselves", async () => {
+  const { metricsLines } = await import("../src/onboarding-agent.ts");
+  const nulls = { agentMessages7d: null, agentMessages28d: null, previewStarts7d: null, previewFailures7d: null, triggerEvents7d: null };
+  const live = usage({ approvedAt: "-20d", lastActivityAt: "-1d", milestones: { firstSignInAt: "-19d", firstLiveAt: "-10d" }, counts: nulls });
+  const assessment = assessUsage(live);
+  assert.equal(assessment.signal, "graduated");
+  const lines = metricsLines(live, assessment).join("\n");
+  assert.match(lines, /\*Studio messages:\* n\/a \(7d\)/);
+  assert.match(lines, /\*Previews:\* n\/a started, n\/a failed/);
+  assert.doesNotMatch(lines, /Trigger events/);
+  assert.equal(assessUsage(usage({ approvedAt: "-6d", lastActivityAt: "-1h", milestones: { firstSignInAt: "-5d" }, counts: nulls })).signal, "progressing");
+});

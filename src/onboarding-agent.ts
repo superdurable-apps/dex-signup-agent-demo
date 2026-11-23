@@ -232,14 +232,16 @@ const oneLine = (text: string | null | undefined, fallback: string): string => e
 const stageLabel = (assessment: UsageAssessment) => `${assessment.stageNumber}/${onboardingStages.length} ${assessment.stage.replace("_", " ")}`;
 const signalEmoji: Record<string, string> = { not_started: ":hourglass:", blocked: ":construction:", stalled: ":zzz:", live_idle: ":sleeping:", graduated: ":mortar_board:", progressing: ":seedling:" };
 const days = (value: number | null) => (value === null ? "n/a" : `${value}d`);
+/** A count the server may not know, shown as n/a. */
+const known = (value: number | null) => (value === null ? "n/a" : String(value));
 
 /** The metrics block of every report: computed in code from the usage, never written by the model. */
 export function metricsLines(usage: AccountUsage, assessment: UsageAssessment): string[] {
   const { counts } = usage;
   return [
     `${signalEmoji[assessment.signal] ?? ""} *Stage:* ${stageLabel(assessment)} · *Signal:* ${assessment.signal.replace("_", " ")} · *Day* ${assessment.daysSinceApproval ?? "?"} · *Last active:* ${days(assessment.daysSinceActivity)} ago`,
-    `*Active days:* ${usage.activeDays7d}/7, ${usage.activeDays28d}/28 · *Studio messages:* ${counts.agentMessages7d} (7d) · *Projects:* ${counts.projects} (${counts.liveProjects} live) · *Connections:* ${counts.connections}${usage.connectors.length > 0 ? ` (${usage.connectors.map((id) => oneLine(id, "")).join(", ")})` : ""}`,
-    `*Previews:* ${counts.previewStarts7d} started, ${counts.previewFailures7d} failed (7d) · *Publishes:* ${counts.publishes28d} (28d) · *Trigger events:* ${counts.triggerEvents7d} (7d) · *Members:* ${counts.members}`,
+    `*Active days:* ${usage.activeDays7d}/7, ${usage.activeDays28d}/28 · *Studio messages:* ${known(counts.agentMessages7d)} (7d) · *Projects:* ${counts.projects} (${counts.liveProjects} live) · *Connections:* ${counts.connections}${usage.connectors.length > 0 ? ` (${usage.connectors.map((id) => oneLine(id, "")).join(", ")})` : ""}`,
+    `*Previews:* ${known(counts.previewStarts7d)} started, ${known(counts.previewFailures7d)} failed (7d) · *Publishes:* ${counts.publishes28d} (28d)${counts.triggerEvents7d === null ? "" : ` · *Trigger events:* ${counts.triggerEvents7d} (7d)`} · *Members:* ${counts.members}`,
     ...(assessment.lastPreviewFailure === null ? [] : [`*Last Preview failure:* ${oneLine(assessment.lastPreviewFailure, "")}`]),
   ];
 }
