@@ -57,6 +57,13 @@ export interface SignupServices {
   readonly slackChannelId: string;
   /** Shown in the review post, such as "pi (Dex built-in agent loop with pi-ai)". */
   readonly harnessLabel: string;
+  /** Starts the account's onboarding once approve_account approved it; absent when the onboarding agent is off. */
+  readonly onboarding?: OnboardingHandoff;
+}
+
+/** The handoff to the onboarding wizard: starts the onboarding session of an approved account, at most once. */
+export interface OnboardingHandoff {
+  start(account: Account, context: { readonly welcomeEmail?: { readonly subject: string; readonly body: string }; readonly reviewThreadTs: string }): Promise<void>;
 }
 
 /** Who calls a tool: the session's FlowID and the Dex per-call key, both absent for a read inside the Claude Code CLI. */
@@ -375,13 +382,14 @@ export function createSignupConnectorTools(services: SignupServices): ToolSource
     write(threadReply, async (call, args) => {
       const accountId = accountOf(call);
       const reason = decision === "reject" ? rejectSchema.parse(args).reason : "";
-      const { thread, earlier, current } = await beforeDispatch(async () => {
+      const { thread, earlier, current, latestDraft } = await beforeDispatch(async () => {
         const record = await sessions.review(accountId);
         const thread = record.thread ?? refuse("call post_review first");
+        const latestDraft = record.latestDraft;
         const earlier = succeededOutput(record.history.records, `${decision}_account`);
         // A read only: the account as it is now decides what an earlier success still means.
         const current = earlier === undefined ? undefined : await services.reviewApi.getAccount(accountId, call.context.cancellationSignal);
-        return { thread, earlier, current };
+        return { thread, earlier, current, latestDraft };
       });
       if (earlier !== undefined && current !== undefined) {
         const verdict = earlierDecision(decision, current.status);
@@ -414,6 +422,13 @@ export function createSignupConnectorTools(services: SignupServices): ToolSource
         }
         const state = await confirm(channelId, thread, `${noun} failed: ${oneLine(messageOf(error), "unknown error")}.`, post);
         throw new ToolExecutionError(`${decision}_account failed: ${messageOf(error)}${noteOfFailure(state)}`);
+      }
+      if (decision === "approve" && services.onboarding !== undefined) {
+        // The onboarding starts under a fixed ID, so a retried Step never starts a second one. Best effort: a failed
+        // start never fails the approval, and the onboarding watcher starts it later without the review's findings.
+        await services.onboarding
+          .start(account, { reviewThreadTs: thread.ts, ...(latestDraft === undefined ? {} : { welcomeEmail: { subject: latestDraft.subject, body: latestDraft.body } }) })
+          .catch((error: unknown) => console.warn(`signup review: the onboarding of ${accountId} did not start: ${messageOf(error)}`));
       }
       const applicant = `${oneLine(account.displayName, "(no name)")} (${oneLine(account.email, "")})`;
       const confirmation = await confirm(

@@ -23,6 +23,14 @@ README gives the overview and the local run; `docs/design.md` describes the desi
    (their checks, texts, schemas and descriptions) are in `connector_tools.go`, and `connector_binding.go` runs them
    as connector operations; no test compares them with the TypeScript tools.
 
+7. The onboarding wizard (`docs/onboarding.md`), on only with `ONBOARDING_ENABLED=true`: `src/onboarding-agent.ts`
+   (prompt and tools), `src/vercel-ai-agent.ts` (the Vercel AI SDK harness, Flow type `OnboardingWizardVercelAiFlow`),
+   `src/onboarding-metrics.ts` (stage and signal, computed in code), `src/onboarding-state.ts` (the session's records),
+   `src/onboarding-watcher.ts` (backfill and due check-ins), `src/usage-api.ts` (the proposed usage operations,
+   `docs/usage-api.md`) and `tools/usage-standin.ts` (their local stand-in). approve_account starts the onboarding;
+   the reply Trigger routes onboarding threads too. The Eino harness does not hand off; the watcher's backfill covers
+   it. Tests: `apptest/onboarding.test.ts`, `test/onboarding-metrics.test.ts`.
+
 The session Flow's graph is committed, not rendered: dex-app.yaml declares
 `flow-definitions/signup-review-pi-agent.json`. When the Flow type or permission changes, or after a
 `@superdurable/dex-agents` update, or a change to the Slack reply binding or the Slack connector version, write

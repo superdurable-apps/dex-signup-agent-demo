@@ -23,6 +23,8 @@ session-graphs: restored
 		--trigger-bindings scripts/session-trigger-bindings.json --out flow-definitions/signup-review-pi-agent.json
 	npx --no-install dex-agents-session-graph --flow-type SignupReviewClaudeAgentFlow --permission signup-review.operate \
 		--trigger-bindings scripts/session-trigger-bindings.json --out flow-definitions/signup-review-claude-agent.json
+	npx --no-install dex-agents-session-graph --flow-type OnboardingWizardVercelAiFlow --permission onboarding.operate \
+		--trigger-bindings scripts/session-trigger-bindings.json --out flow-definitions/onboarding-vercel-ai-agent.json
 check-fdg-v2: restored
 	python3 ./scripts/render-flow-definitions.py
 check-static: check-fdg-v2
